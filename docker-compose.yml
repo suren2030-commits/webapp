@@ -1,0 +1,43 @@
+version: "3.8"
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: celebrate
+      MYSQL_USER: celebrate
+      MYSQL_PASSWORD: celebrate
+    volumes:
+      - db-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+
+  backend:
+    build:
+      context: ./backend
+    command: gunicorn app.wsgi:application --bind 0.0.0.0:8000
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_HOST=db
+      - DATABASE_NAME=celebrate
+      - DATABASE_USER=celebrate
+      - DATABASE_PASSWORD=celebrate
+      - DATABASE_PORT=3306
+      - DJANGO_SETTINGS_MODULE=app.settings
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    ports:
+      - "4200:80"
+    depends_on:
+      - backend
+
+volumes:
+  db-data:
