@@ -73,6 +73,10 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
 spec:
   ingressClassName: nginx
+  tls:
+  - hosts:
+    - analytics.airport.ops
+    secretName: airport-tls
   rules:
   - host: analytics.airport.ops
     http:

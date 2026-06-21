@@ -18,8 +18,8 @@ data:
   CLICKHOUSE_USER:      "apoc_user"
   CLICKHOUSE_DATABASE:  "apoc_analytics"
   KEYCLOAK_URL:         "http://keycloak.keycloak.svc.cluster.local"
-  KEYCLOAK_REALM:       "master"
-  CORS_ORIGIN:          "http://airport.ops"
+  KEYCLOAK_REALM:       "apoc"
+  CORS_ORIGIN:          "https://airport.ops"
 ---
 apiVersion: v1
 kind: Secret
@@ -94,6 +94,10 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size:    "10m"
 spec:
   ingressClassName: nginx
+  tls:
+  - hosts:
+    - api.airport.ops
+    secretName: airport-tls
   rules:
   - host: api.airport.ops
     http:

@@ -4,11 +4,12 @@ metadata:
   name: keycloak
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: keycloak
   namespace: keycloak
 spec:
+  serviceName: keycloak
   replicas: 1
   selector:
     matchLabels:
@@ -35,6 +36,17 @@ spec:
           value: "true"
         ports:
         - containerPort: 8080
+        volumeMounts:
+        - name: keycloak-data
+          mountPath: /opt/keycloak/data
+  volumeClaimTemplates:
+  - metadata:
+      name: keycloak-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
@@ -58,6 +70,10 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: "128k"
 spec:
   ingressClassName: nginx
+  tls:
+  - hosts:
+    - auth.airport.ops
+    secretName: airport-tls
   rules:
   - host: auth.airport.ops
     http:

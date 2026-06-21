@@ -40,6 +40,10 @@ metadata:
   namespace: apoc
 spec:
   ingressClassName: nginx
+  tls:
+  - hosts:
+    - airport.ops
+    secretName: airport-tls
   rules:
   - host: airport.ops
     http:
