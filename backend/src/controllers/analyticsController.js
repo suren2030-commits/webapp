@@ -7,37 +7,147 @@ async function getLiveStats(req, res, next) {
 
     let where = 'WHERE DATE(scheduled_departure) = ?';
     const params = [date];
-
     if (airport_id) {
       where += ' AND (origin_airport_id = ? OR destination_airport_id = ?)';
       params.push(airport_id, airport_id);
     }
 
-    const [[stats]] = await db.query(
-      `SELECT
-        COUNT(*)                                        AS total_flights,
-        SUM(status = 'departed')                        AS \`departed\`,
-        SUM(status = 'arrived')                         AS \`arrived\`,
-        SUM(status = 'delayed')                         AS \`delayed\`,
-        SUM(status = 'cancelled')                       AS \`cancelled\`,
-        SUM(status = 'boarding')                        AS \`boarding\`,
-        SUM(status = 'scheduled')                       AS \`scheduled\`,
-        ROUND(AVG(
-          CASE WHEN actual_departure IS NOT NULL AND scheduled_departure IS NOT NULL
-               THEN TIMESTAMPDIFF(MINUTE, scheduled_departure, actual_departure)
-          END
-        ), 1)                                           AS avg_departure_delay_min,
-        ROUND(
-          100.0 * SUM(
-            CASE WHEN actual_departure <= DATE_ADD(scheduled_departure, INTERVAL 15 MINUTE)
-                 AND actual_departure IS NOT NULL THEN 1 ELSE 0 END
-          ) / NULLIF(SUM(status IN ('departed','arrived')), 0)
-        , 1)                                            AS otp_percentage
-       FROM flights ${where}`,
-      params
-    );
+    const incidentWhere  = airport_id ? 'WHERE airport_id = ?' : '';
+    const incidentParams = airport_id ? [airport_id] : [];
 
-    res.json({ date, airport_id: airport_id || null, ...stats });
+    const gateExtra  = airport_id ? 'AND t.airport_id = ?' : '';
+    const gateParams = airport_id ? [airport_id] : [];
+
+    const runwayExtra  = airport_id ? 'AND (origin_airport_id = ? OR destination_airport_id = ?)' : '';
+    const runwayParams = airport_id ? [airport_id, airport_id] : [];
+
+    const [statsRes, peakRes, incidentRes, gateRes, runwayRes] = await Promise.all([
+      db.query(`
+        SELECT
+          COUNT(*)                                          AS total_flights,
+          SUM(status = 'departed')                          AS \`departed\`,
+          SUM(status = 'arrived')                           AS \`arrived\`,
+          SUM(status = 'delayed')                           AS \`delayed\`,
+          SUM(status = 'cancelled')                         AS \`cancelled\`,
+          SUM(status = 'boarding')                          AS \`boarding\`,
+          SUM(status = 'scheduled')                         AS \`scheduled\`,
+          COALESCE(SUM(passenger_count), 0)                 AS total_passengers,
+          ROUND(AVG(
+            CASE WHEN actual_departure IS NOT NULL
+                 THEN TIMESTAMPDIFF(MINUTE, scheduled_departure, actual_departure) END
+          ), 1)                                             AS avg_departure_delay_min,
+          ROUND(AVG(
+            CASE WHEN actual_arrival IS NOT NULL AND scheduled_arrival IS NOT NULL
+                 THEN TIMESTAMPDIFF(MINUTE, scheduled_arrival, actual_arrival) END
+          ), 1)                                             AS avg_arrival_delay_min,
+          ROUND(
+            100.0 * SUM(CASE WHEN actual_departure <= DATE_ADD(scheduled_departure, INTERVAL 15 MINUTE)
+                             AND actual_departure IS NOT NULL THEN 1 ELSE 0 END)
+            / NULLIF(SUM(actual_departure IS NOT NULL), 0)
+          , 1)                                              AS otp_percentage,
+          ROUND(
+            100.0 * SUM(CASE WHEN actual_departure <= DATE_ADD(scheduled_departure, INTERVAL 15 MINUTE)
+                             AND actual_departure IS NOT NULL THEN 1 ELSE 0 END)
+            / NULLIF(SUM(actual_departure IS NOT NULL), 0)
+          , 1)                                              AS departure_otp_pct,
+          ROUND(
+            100.0 * SUM(CASE WHEN actual_arrival <= DATE_ADD(scheduled_arrival, INTERVAL 15 MINUTE)
+                             AND actual_arrival IS NOT NULL THEN 1 ELSE 0 END)
+            / NULLIF(SUM(actual_arrival IS NOT NULL), 0)
+          , 1)                                              AS arrival_otp_pct
+        FROM flights ${where}
+      `, params),
+
+      db.query(`
+        SELECT COALESCE(MAX(cnt), 0) AS peak_hour_flights
+        FROM (SELECT COUNT(*) AS cnt FROM flights ${where} GROUP BY HOUR(scheduled_departure)) sub
+      `, params),
+
+      db.query(`
+        SELECT
+          COALESCE(SUM(status IN ('open','in_progress')), 0)                           AS open_incidents,
+          COALESCE(SUM(severity = 'critical' AND status IN ('open','in_progress')), 0)  AS critical_incidents
+        FROM incidents ${incidentWhere}
+      `, incidentParams),
+
+      db.query(`
+        SELECT
+          COUNT(*) AS total_gates,
+          COALESCE(SUM(fga.id IS NOT NULL), 0) AS occupied_gates
+        FROM gates g
+        JOIN terminals t ON g.terminal_id = t.id
+        LEFT JOIN flight_gate_assignments fga
+          ON g.id = fga.gate_id AND fga.status IN ('active','planned') AND fga.to_time >= NOW()
+        WHERE g.status = 'active' ${gateExtra}
+      `, gateParams),
+
+      db.query(`
+        SELECT COUNT(*) AS runway_movements_hr
+        FROM flights
+        WHERE DATE(scheduled_departure) = CURDATE()
+          AND HOUR(scheduled_departure) = HOUR(NOW())
+          ${runwayExtra}
+      `, runwayParams),
+    ]);
+
+    const s        = statsRes[0][0];
+    const gate     = gateRes[0][0];
+    const gateUtil = gate?.total_gates > 0
+      ? Math.round((Number(gate.occupied_gates) / Number(gate.total_gates)) * 100)
+      : 0;
+
+    const total     = Number(s?.total_flights || 0);
+    const completed = Number(s?.departed || 0) + Number(s?.arrived || 0);
+    const remaining = Number(s?.scheduled || 0) + Number(s?.boarding || 0) + Number(s?.delayed || 0);
+    const completedPct = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+    res.json({
+      date,
+      airport_id: airport_id || null,
+      ...s,
+      peak_hour_flights:    Number(peakRes[0][0]?.peak_hour_flights    || 0),
+      open_incidents:       Number(incidentRes[0][0]?.open_incidents    || 0),
+      critical_incidents:   Number(incidentRes[0][0]?.critical_incidents || 0),
+      gate_utilization_pct: gateUtil,
+      completed_pct:        completedPct,
+      remaining_flights:    remaining,
+      runway_movements_hr:  Number(runwayRes[0][0]?.runway_movements_hr || 0),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getAirportComparison(req, res, next) {
+  try {
+    const { date = new Date().toISOString().slice(0, 10) } = req.query;
+
+    const [rows] = await db.query(`
+      SELECT
+        a.id          AS airport_id,
+        a.iata_code,
+        a.city,
+        COUNT(f.id)                                              AS total_flights,
+        COALESCE(SUM(f.status IN ('departed','arrived')), 0)    AS completed,
+        COALESCE(SUM(f.status = 'delayed'), 0)                  AS \`delayed\`,
+        COALESCE(SUM(f.status = 'cancelled'), 0)                AS cancelled,
+        COALESCE(SUM(f.status = 'boarding'), 0)                 AS boarding,
+        COALESCE(SUM(f.passenger_count), 0)                     AS total_passengers,
+        ROUND(
+          100.0 * SUM(CASE WHEN f.actual_departure <= DATE_ADD(f.scheduled_departure, INTERVAL 15 MINUTE)
+                           AND f.actual_departure IS NOT NULL THEN 1 ELSE 0 END)
+          / NULLIF(SUM(f.status IN ('departed','arrived')), 0)
+        , 1)                                                     AS otp_pct
+      FROM airports a
+      LEFT JOIN flights f
+        ON (f.origin_airport_id = a.id OR f.destination_airport_id = a.id)
+        AND DATE(f.scheduled_departure) = ?
+      WHERE a.id IN (1,2,3,4)
+      GROUP BY a.id, a.iata_code, a.city
+      ORDER BY a.id
+    `, [date]);
+
+    res.json(rows);
   } catch (err) {
     next(err);
   }
@@ -210,4 +320,7 @@ async function getResourceUtilization(req, res, next) {
   }
 }
 
-module.exports = { getLiveStats, getKpiSnapshots, getDelayTrends, getFlightEvents, getResourceUtilization };
+module.exports = {
+  getLiveStats, getAirportComparison,
+  getKpiSnapshots, getDelayTrends, getFlightEvents, getResourceUtilization,
+};

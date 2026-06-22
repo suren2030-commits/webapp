@@ -41,7 +41,6 @@ async function run() {
   console.log('Clearing existing data…');
   await db.query('SET FOREIGN_KEY_CHECKS = 0');
   for (const t of [
-    'alerts', 'operational_notes', 'incident_updates', 'incidents',
     'flight_ground_services', 'flight_carousel_assignments',
     'flight_checkin_assignments', 'flight_runway_assignments',
     'flight_stand_assignments', 'flight_gate_assignments', 'flights',

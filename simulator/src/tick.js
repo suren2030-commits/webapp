@@ -29,7 +29,7 @@ async function tick() {
     `SELECT id, flight_number, origin_airport_id, destination_airport_id,
             scheduled_departure, scheduled_arrival,
             estimated_departure, estimated_arrival,
-            actual_departure, status
+            actual_departure, actual_arrival, status
      FROM flights
      WHERE scheduled_departure BETWEEN ? AND ?
        AND status NOT IN ('arrived','cancelled','diverted')`,
@@ -53,11 +53,13 @@ async function tick() {
     let newEstDep = f.estimated_departure;
     let newEstArr = f.estimated_arrival;
     let newActDep = f.actual_departure;
+    let newActArr = f.actual_arrival;
 
     if (nowMs >= effArrMs + 10 * 60_000) {
       // Arrival time has passed
       newStatus = 'arrived';
       if (!newActDep) newActDep = fmtUtc(new Date(effDepMs + randMs(0, 120_000)));
+      if (!newActArr) newActArr = fmtUtc(new Date(effArrMs + randMs(0, 600_000)));
 
     } else if (f.status === 'delayed' && nowMs >= effDepMs) {
       // Delayed flight now past its estimated departure
@@ -81,12 +83,13 @@ async function tick() {
       }
     }
 
-    if (newStatus !== f.status || newActDep !== f.actual_departure) {
+    if (newStatus !== f.status || newActDep !== f.actual_departure || newActArr !== f.actual_arrival) {
       await db.query(
         `UPDATE flights
-         SET status=?, estimated_departure=?, estimated_arrival=?, actual_departure=?, updated_at=NOW()
+         SET status=?, estimated_departure=?, estimated_arrival=?,
+             actual_departure=?, actual_arrival=?, updated_at=NOW()
          WHERE id=?`,
-        [newStatus, newEstDep, newEstArr, newActDep, f.id],
+        [newStatus, newEstDep, newEstArr, newActDep, newActArr, f.id],
       );
 
       const payload = {
@@ -95,6 +98,7 @@ async function tick() {
         status:        newStatus,
         estimated_departure: newEstDep,
         actual_departure:    newActDep,
+        actual_arrival:      newActArr,
       };
 
       // Emit to both origin and destination airport rooms
