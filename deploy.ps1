@@ -1,13 +1,14 @@
 # deploy.ps1 — Build, push, and restart APOC services
 #
 # Usage:
-#   .\deploy.ps1              # deploy both frontend and backend
+#   .\deploy.ps1                   # deploy frontend, backend, simulator
 #   .\deploy.ps1 -Service frontend
 #   .\deploy.ps1 -Service backend
-#   .\deploy.ps1 -NoCache     # force full Docker rebuild (no layer cache)
+#   .\deploy.ps1 -Service simulator
+#   .\deploy.ps1 -NoCache          # force full Docker rebuild (no layer cache)
 
 param(
-    [ValidateSet('frontend', 'backend', 'all')]
+    [ValidateSet('frontend', 'backend', 'simulator', 'all')]
     [string]$Service = 'all',
     [switch]$NoCache
 )
@@ -17,8 +18,9 @@ $NAMESPACE = 'apoc'
 $ROOT      = $PSScriptRoot
 
 $SERVICES = @{
-    frontend = @{ context = "$ROOT\frontend"; image = 'apoc-frontend' }
-    backend  = @{ context = "$ROOT\backend";  image = 'apoc-backend'  }
+    frontend  = @{ context = "$ROOT\frontend";  image = 'apoc-frontend'  }
+    backend   = @{ context = "$ROOT\backend";   image = 'apoc-backend'   }
+    simulator = @{ context = "$ROOT\simulator"; image = 'apoc-simulator' }
 }
 
 function Write-Step([string]$msg) {
@@ -64,7 +66,7 @@ function Deploy-Service([string]$name) {
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-$targets = if ($Service -eq 'all') { @('frontend', 'backend') } else { @($Service) }
+$targets = if ($Service -eq 'all') { @('frontend', 'backend', 'simulator') } else { @($Service) }
 
 $start   = Get-Date
 $results = @{}

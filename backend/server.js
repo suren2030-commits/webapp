@@ -10,6 +10,7 @@ const analyticsRouter = require('./src/routes/analytics');
 const airportsRouter  = require('./src/routes/airports');
 const gatesRouter     = require('./src/routes/gates');
 const incidentsRouter = require('./src/routes/incidents');
+const internalRouter  = require('./src/routes/internal');
 const errorHandler   = require('./src/middleware/errorHandler');
 const initSockets    = require('./src/sockets');
 
@@ -32,6 +33,7 @@ app.use('/api/flights',   flightsRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/gates',     gatesRouter);
 app.use('/api/incidents', incidentsRouter);
+app.use('/api/internal',  internalRouter);
 
 app.use(errorHandler);
 

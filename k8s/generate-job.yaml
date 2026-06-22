@@ -1,0 +1,37 @@
+# Run once to seed 30 days of historical flight data + ClickHouse KPI/delay events.
+# Usage:
+#   kubectl apply -f k8s/generate-job.yaml
+#   kubectl logs -n apoc job/data-generator -f
+#   kubectl delete job data-generator -n apoc   # clean up after success
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-generator
+  namespace: apoc
+spec:
+  ttlSecondsAfterFinished: 600   # auto-delete pod 10 min after job completes
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: generator
+        image: host.docker.internal:5000/apoc-simulator:latest
+        imagePullPolicy: Always
+        command: ["node", "src/generate.js"]
+        env:
+        - name: DAYS_BACK
+          value: "29"
+        - name: DAYS_AHEAD
+          value: "2"
+        envFrom:
+        - configMapRef:
+            name: backend-config
+        - secretRef:
+            name: backend-secrets
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
