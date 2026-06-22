@@ -39,20 +39,17 @@ export default function Dashboard() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    try {
-      const params = airportId ? { airport_id: airportId } : {};
-      const [statsData, delayData] = await Promise.all([
-        getLiveStats(params),
-        getDelayTrends({ ...params, group_by: 'day' }),
-      ]);
-      setStats(statsData);
-      setDelays(delayData);
-      setLastUpdated(dayjs());
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+    const params = airportId ? { airport_id: airportId } : {};
+    const [statsResult, delayResult] = await Promise.allSettled([
+      getLiveStats(params),
+      getDelayTrends({ ...params, group_by: 'day' }),
+    ]);
+    if (statsResult.status === 'fulfilled') setStats(statsResult.value);
+    else console.error('Live stats failed:', statsResult.reason);
+    if (delayResult.status === 'fulfilled') setDelays(delayResult.value);
+    else console.error('Delay trends failed:', delayResult.reason);
+    setLastUpdated(dayjs());
+    setLoading(false);
   }, [airportId]);
 
   useEffect(() => {

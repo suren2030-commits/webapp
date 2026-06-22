@@ -16,12 +16,12 @@ async function getLiveStats(req, res, next) {
     const [[stats]] = await db.query(
       `SELECT
         COUNT(*)                                        AS total_flights,
-        SUM(status = 'departed')                        AS departed,
-        SUM(status = 'arrived')                         AS arrived,
-        SUM(status = 'delayed')                         AS delayed,
-        SUM(status = 'cancelled')                       AS cancelled,
-        SUM(status = 'boarding')                        AS boarding,
-        SUM(status = 'scheduled')                       AS scheduled,
+        SUM(status = 'departed')                        AS \`departed\`,
+        SUM(status = 'arrived')                         AS \`arrived\`,
+        SUM(status = 'delayed')                         AS \`delayed\`,
+        SUM(status = 'cancelled')                       AS \`cancelled\`,
+        SUM(status = 'boarding')                        AS \`boarding\`,
+        SUM(status = 'scheduled')                       AS \`scheduled\`,
         ROUND(AVG(
           CASE WHEN actual_departure IS NOT NULL AND scheduled_departure IS NOT NULL
                THEN TIMESTAMPDIFF(MINUTE, scheduled_departure, actual_departure)
