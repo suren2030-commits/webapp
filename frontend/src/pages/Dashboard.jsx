@@ -10,7 +10,7 @@ import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import { getLiveStats, getDelayTrends, getKpiSnapshots, getAirportComparison } from '../api/analytics';
+import { getLiveStats, getDelayTrends, getKpiSnapshots, getAirportComparison, getDelayHeatmap } from '../api/analytics';
 import client from '../api/client';
 import useAppStore from '../store/useAppStore';
 import dayjs from 'dayjs';
@@ -100,6 +100,7 @@ export default function Dashboard() {
   const [dailyKpi, setDailyKpi]         = useState([]);
   const [comparison, setComparison]     = useState([]);
   const [criticalInc, setCriticalInc]   = useState([]);
+  const [heatmap, setHeatmap]           = useState([]);
   const [loading, setLoading]           = useState(false);
   const [lastUpdated, setLastUpdated]   = useState(null);
 
@@ -113,21 +114,23 @@ export default function Dashboard() {
     const yesterday = dayjs().subtract(7, 'day').format('YYYY-MM-DD HH:mm:ss');
     const dayStart  = dayjs().startOf('day').format('YYYY-MM-DD HH:mm:ss');
 
-    const [statsRes, delaysRes, hourlyRes, dailyRes, compRes, incRes] = await Promise.allSettled([
+    const [statsRes, delaysRes, hourlyRes, dailyRes, compRes, incRes, heatmapRes] = await Promise.allSettled([
       getLiveStats(params),
       getDelayTrends({ ...params, group_by: 'day' }),
       getKpiSnapshots({ ...params, period_type: 'hourly', from: dayStart, limit: 24 }),
       getKpiSnapshots({ ...params, period_type: 'daily',  from: yesterday, limit: 7 }),
       getAirportComparison({}),
       client.get('/api/incidents', { params: { severity: 'critical', status: 'open', limit: 5, ...params } }).then(r => r.data),
+      getDelayHeatmap(params),
     ]);
 
     if (statsRes.status  === 'fulfilled') setStats(statsRes.value);
     if (delaysRes.status === 'fulfilled') setDelays(delaysRes.value);
     if (hourlyRes.status === 'fulfilled') setHourlyKpi([...(hourlyRes.value || [])].reverse());
     if (dailyRes.status  === 'fulfilled') setDailyKpi([...(dailyRes.value  || [])].reverse());
-    if (compRes.status   === 'fulfilled') setComparison(compRes.value || []);
-    if (incRes.status    === 'fulfilled') setCriticalInc(incRes.value?.data || []);
+    if (compRes.status    === 'fulfilled') setComparison(compRes.value || []);
+    if (incRes.status     === 'fulfilled') setCriticalInc(incRes.value?.data || []);
+    if (heatmapRes.status === 'fulfilled') setHeatmap(heatmapRes.value || []);
 
     setLastUpdated(dayjs());
     setLoading(false);
@@ -584,6 +587,41 @@ export default function Dashboard() {
                     );
                   })}
                 </Row>
+              )}
+            </Card>
+          </Col>
+        </Row>
+
+        {/* Delay Heatmap — Hour of Day */}
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          <Col span={24}>
+            <Card
+              title={<span style={{ fontWeight: 600 }}>Delay Heatmap — Hour of Day</span>}
+              extra={<Text type="secondary" style={{ fontSize: 12 }}>Avg delay (min) · Delayed flights per hour today</Text>}
+              style={{ borderRadius: 12 }}
+              bodyStyle={{ padding: '12px 16px' }}
+            >
+              {heatmap.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>No data today</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={heatmap} margin={{ top: 5, right: 20, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="hour_of_day" tickFormatter={h => `${String(h).padStart(2,'0')}:00`} tick={{ fontSize: 10 }} />
+                    <YAxis yAxisId="delay" tick={{ fontSize: 11 }} />
+                    <YAxis yAxisId="count" orientation="right" tick={{ fontSize: 11 }} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Bar yAxisId="delay" dataKey="avg_delay_min" name="Avg Delay (min)" radius={[4,4,0,0]}>
+                      {heatmap.map(row => {
+                        const d = Number(row.avg_delay_min || 0);
+                        const fill = d >= 30 ? '#f5222d' : d >= 15 ? '#fa8c16' : d >= 5 ? '#fadb14' : '#52c41a';
+                        return <Cell key={row.hour_of_day} fill={fill} />;
+                      })}
+                    </Bar>
+                    <Bar yAxisId="count" dataKey="delayed_count" name="Delayed Flights" fill="#fa8c16" opacity={0.4} radius={[4,4,0,0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               )}
             </Card>
           </Col>

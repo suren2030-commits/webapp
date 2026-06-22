@@ -1,7 +1,8 @@
 const router = require('express').Router();
 const { body, query } = require('express-validator');
 const ctrl = require('../controllers/flightsController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireRole } = require('../middleware/auth');
+const { auditLog } = require('../middleware/auditLog');
 
 const flightBody = [
   body('flight_number').notEmpty().isLength({ max: 10 }),
@@ -27,6 +28,11 @@ router.get('/:id', authenticate, ctrl.getFlight);
 router.get('/:id/assignments', authenticate, ctrl.getFlightAssignments);
 router.post('/',   authenticate, flightBody, ctrl.createFlight);
 router.put('/:id', authenticate, ctrl.updateFlight);
-router.patch('/:id/status', authenticate, statusBody, ctrl.updateFlightStatus);
+router.patch('/:id/status',
+  authenticate,
+  requireRole('admin', 'supervisor', 'controller'),
+  statusBody,
+  auditLog('flight_status_update', 'flight', 'id', (req) => `Status → ${req.body.status}`),
+  ctrl.updateFlightStatus);
 
 module.exports = router;

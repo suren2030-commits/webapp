@@ -1,13 +1,18 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Table, Tag, Typography, Space, DatePicker, Badge, Tooltip,
-  Input, Button, Row, Col, Card,
+  Input, Button, Row, Col, Card, Drawer, Select, Divider,
+  Descriptions, message, Steps, theme,
 } from 'antd';
-import { SearchOutlined, WifiOutlined, ReloadOutlined, ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons';
+import {
+  SearchOutlined, WifiOutlined, ReloadOutlined,
+  ArrowUpOutlined, ArrowDownOutlined, EditOutlined, CheckCircleOutlined,
+} from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { getFlights } from '../api/flights';
+import { getFlights, getFlight, updateFlightStatus } from '../api/flights';
 import socket, { joinAirport, leaveAirport } from '../socket';
 import useAppStore from '../store/useAppStore';
+import { useAuth } from '../auth/AuthProvider';
 
 const { Title, Text } = Typography;
 
@@ -27,15 +32,10 @@ function StatusBadge({ status }) {
   const cfg = STATUS_CONFIG[status] || { color: '#8c8c8c', bg: '#f5f5f5', label: status };
   return (
     <span style={{
-      background: cfg.bg,
-      color: cfg.color,
+      background: cfg.bg, color: cfg.color,
       border: `1px solid ${cfg.color}40`,
-      borderRadius: 20,
-      padding: '2px 10px',
-      fontSize: 12,
-      fontWeight: 600,
-      display: 'inline-block',
-      whiteSpace: 'nowrap',
+      borderRadius: 20, padding: '2px 10px',
+      fontSize: 12, fontWeight: 600, display: 'inline-block', whiteSpace: 'nowrap',
     }}>
       {cfg.label}
     </span>
@@ -44,17 +44,14 @@ function StatusBadge({ status }) {
 
 function TimeCell({ scheduled, estimated, type }) {
   const delay = scheduled && estimated
-    ? dayjs(estimated).diff(dayjs(scheduled), 'minute')
-    : null;
+    ? dayjs(estimated).diff(dayjs(scheduled), 'minute') : null;
   return (
     <Space direction="vertical" size={0}>
       <Text style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: 14 }}>
         {dayjs(scheduled).format('HH:mm')}
       </Text>
       {delay !== null && delay > 1 && (
-        <Text style={{ fontSize: 11, color: '#d46b08', fontWeight: 600 }}>
-          +{delay}m late
-        </Text>
+        <Text style={{ fontSize: 11, color: '#d46b08', fontWeight: 600 }}>+{delay}m late</Text>
       )}
     </Space>
   );
@@ -78,30 +75,17 @@ function SummaryBar({ flights }) {
     acc[f.status] = (acc[f.status] || 0) + 1;
     return acc;
   }, {});
-
-  const items = STATUS_ORDER.filter(s => counts[s]).map(s => ({
-    ...STATUS_CONFIG[s],
-    status: s,
-    count: counts[s],
-  }));
-
+  const items = STATUS_ORDER.filter(s => counts[s]).map(s => ({ ...STATUS_CONFIG[s], status: s, count: counts[s] }));
   return (
     <Row gutter={[8, 8]} style={{ marginBottom: 16 }}>
       {items.map(item => (
         <Col key={item.status}>
           <div style={{
-            background: item.bg,
-            border: `1px solid ${item.color}40`,
-            borderRadius: 8,
-            padding: '6px 14px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
+            background: item.bg, border: `1px solid ${item.color}40`,
+            borderRadius: 8, padding: '6px 14px',
+            display: 'flex', alignItems: 'center', gap: 6,
           }}>
-            <span style={{
-              width: 8, height: 8, borderRadius: '50%',
-              background: item.color, display: 'inline-block',
-            }} />
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: item.color, display: 'inline-block' }} />
             <Text style={{ color: item.color, fontWeight: 700, fontSize: 15 }}>{item.count}</Text>
             <Text style={{ color: item.color, fontSize: 12 }}>{item.label}</Text>
           </div>
@@ -115,9 +99,7 @@ function buildColumns(type) {
   const isDep = type === 'departure';
   return [
     {
-      title: 'Flight',
-      dataIndex: 'flight_number',
-      width: 120,
+      title: 'Flight', dataIndex: 'flight_number', width: 120,
       render: (v, r) => (
         <Space direction="vertical" size={0}>
           <Text strong style={{ fontSize: 14, letterSpacing: 1 }}>{v}</Text>
@@ -127,88 +109,200 @@ function buildColumns(type) {
     },
     {
       title: isDep ? 'Destination' : 'Origin',
-      dataIndex: isDep ? 'dest_iata' : 'origin_iata',
-      width: 130,
-      render: (v, r) => (
-        <AirportCell
-          iata={v}
-          name={isDep ? r.dest_name : r.origin_name}
-        />
-      ),
+      dataIndex: isDep ? 'dest_iata' : 'origin_iata', width: 130,
+      render: (v, r) => <AirportCell iata={v} name={isDep ? r.dest_name : r.origin_name} />,
     },
     {
       title: isDep ? 'Departs' : 'Arrives',
-      dataIndex: isDep ? 'scheduled_departure' : 'scheduled_arrival',
-      width: 90,
+      dataIndex: isDep ? 'scheduled_departure' : 'scheduled_arrival', width: 90,
       sorter: (a, b) => {
-        const ka = isDep ? 'scheduled_departure' : 'scheduled_arrival';
-        return dayjs(a[ka]).valueOf() - dayjs(b[ka]).valueOf();
+        const k = isDep ? 'scheduled_departure' : 'scheduled_arrival';
+        return dayjs(a[k]).valueOf() - dayjs(b[k]).valueOf();
       },
       defaultSortOrder: 'ascend',
       render: (v, r) => (
-        <TimeCell
-          scheduled={v}
-          estimated={isDep ? r.estimated_departure : r.estimated_arrival}
-          type={type}
-        />
+        <TimeCell scheduled={v} estimated={isDep ? r.estimated_departure : r.estimated_arrival} type={type} />
       ),
     },
     {
-      title: 'Status',
-      dataIndex: 'status',
-      width: 120,
+      title: 'Status', dataIndex: 'status', width: 120,
       filters: Object.entries(STATUS_CONFIG).map(([k, v]) => ({ text: v.label, value: k })),
       onFilter: (value, record) => record.status === value,
       render: (v) => <StatusBadge status={v} />,
     },
     {
-      title: 'Gate',
-      dataIndex: 'gate_code',
-      width: 70,
+      title: 'Gate', dataIndex: 'gate_code', width: 70,
       render: (v) => v ? (
         <span style={{
-          background: '#f0f5ff',
-          color: '#2f54eb',
-          border: '1px solid #adc6ff',
-          borderRadius: 6,
-          padding: '2px 8px',
-          fontWeight: 700,
-          fontSize: 13,
-        }}>
-          {v}
-        </span>
+          background: '#f0f5ff', color: '#2f54eb', border: '1px solid #adc6ff',
+          borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 13,
+        }}>{v}</span>
       ) : <Text type="secondary">—</Text>,
     },
     {
-      title: 'PAX',
-      dataIndex: 'passenger_count',
-      width: 60,
-      render: (v) => v != null ? (
-        <Text style={{ fontSize: 13 }}>{v}</Text>
-      ) : <Text type="secondary">—</Text>,
+      title: 'PAX', dataIndex: 'passenger_count', width: 60,
+      render: (v) => v != null ? <Text style={{ fontSize: 13 }}>{v}</Text> : <Text type="secondary">—</Text>,
     },
   ];
 }
 
-const TAB_STYLE_ACTIVE = {
-  background: '#1677ff',
-  color: '#fff',
-  border: '1px solid #1677ff',
-};
-const TAB_STYLE_INACTIVE = {
-  background: '#fff',
-  color: '#595959',
-  border: '1px solid #d9d9d9',
-};
+const TAB_ACTIVE   = { background: '#1677ff', color: '#fff', border: '1px solid #1677ff' };
+const TAB_INACTIVE = { background: '#fff',    color: '#595959', border: '1px solid #d9d9d9' };
+
+const VALID_STATUSES = ['scheduled', 'boarding', 'departed', 'arrived', 'delayed', 'cancelled', 'diverted'];
+
+function FlightDrawer({ flight, open, onClose, canOverride, onStatusChanged }) {
+  const [overrideStatus, setOverrideStatus] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const { token } = theme.useToken();
+
+  const handleOverride = async () => {
+    if (!overrideStatus) return;
+    setSaving(true);
+    try {
+      await updateFlightStatus(flight.id, { status: overrideStatus });
+      message.success(`Status updated to "${overrideStatus}"`);
+      onStatusChanged(flight.id, overrideStatus);
+      setOverrideStatus(null);
+    } catch (e) {
+      message.error(e?.response?.data?.error || 'Failed to update status');
+    }
+    setSaving(false);
+  };
+
+  if (!flight) return null;
+
+  const f = flight;
+  const depDelay = f.actual_departure && f.scheduled_departure
+    ? dayjs(f.actual_departure).diff(dayjs(f.scheduled_departure), 'minute') : null;
+
+  const timelineItems = [
+    {
+      title:       'Scheduled Departure',
+      description: f.scheduled_departure ? dayjs(f.scheduled_departure).format('DD MMM HH:mm') : '—',
+      status:      f.actual_departure ? 'finish' : 'wait',
+    },
+    {
+      title:       'Actual Departure',
+      description: f.actual_departure
+        ? `${dayjs(f.actual_departure).format('DD MMM HH:mm')}${depDelay !== null && depDelay > 0 ? ` (+${depDelay}m)` : ''}`
+        : (f.estimated_departure ? `ETA ${dayjs(f.estimated_departure).format('HH:mm')}` : 'Pending'),
+      status: f.actual_departure ? 'finish' : (f.status === 'departed' || f.status === 'arrived' ? 'process' : 'wait'),
+    },
+    {
+      title:       'Scheduled Arrival',
+      description: f.scheduled_arrival ? dayjs(f.scheduled_arrival).format('DD MMM HH:mm') : '—',
+      status:      f.actual_arrival ? 'finish' : 'wait',
+    },
+    {
+      title:       'Actual Arrival',
+      description: f.actual_arrival
+        ? dayjs(f.actual_arrival).format('DD MMM HH:mm')
+        : (f.estimated_arrival ? `ETA ${dayjs(f.estimated_arrival).format('HH:mm')}` : 'Pending'),
+      status: f.actual_arrival ? 'finish' : (f.status === 'arrived' ? 'process' : 'wait'),
+    },
+  ];
+
+  return (
+    <Drawer
+      title={
+        <Space>
+          <Text strong style={{ fontSize: 18, letterSpacing: 1 }}>{f.flight_number}</Text>
+          <StatusBadge status={f.status} />
+        </Space>
+      }
+      width={480}
+      open={open}
+      onClose={onClose}
+      extra={<Button onClick={onClose}>Close</Button>}
+    >
+      <Descriptions size="small" column={2} style={{ marginBottom: 20 }}>
+        <Descriptions.Item label="Airline" span={2}>
+          {f.airline_name || f.airline_iata || '—'}
+        </Descriptions.Item>
+        <Descriptions.Item label="Aircraft">
+          {f.aircraft_model || '—'}
+        </Descriptions.Item>
+        <Descriptions.Item label="Gate">
+          {f.gate_code ? (
+            <span style={{
+              background: '#f0f5ff', color: '#2f54eb',
+              border: '1px solid #adc6ff', borderRadius: 6,
+              padding: '1px 8px', fontWeight: 700,
+            }}>{f.gate_code}</span>
+          ) : '—'}
+        </Descriptions.Item>
+        <Descriptions.Item label="From" span={1}>
+          <Text strong>{f.origin_iata}</Text>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{f.origin_name}</Text>
+        </Descriptions.Item>
+        <Descriptions.Item label="To" span={1}>
+          <Text strong>{f.dest_iata}</Text>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{f.dest_name}</Text>
+        </Descriptions.Item>
+        <Descriptions.Item label="Passengers">
+          {f.passenger_count ?? '—'}
+        </Descriptions.Item>
+      </Descriptions>
+
+      <Divider orientation="left" orientationMargin={0} style={{ fontSize: 13, color: token.colorTextSecondary }}>
+        Flight Timeline
+      </Divider>
+
+      <Steps
+        direction="vertical"
+        size="small"
+        current={timelineItems.findLastIndex(i => i.status === 'finish') + 1}
+        items={timelineItems}
+        style={{ marginBottom: 24 }}
+      />
+
+      {canOverride && (
+        <>
+          <Divider orientation="left" orientationMargin={0} style={{ fontSize: 13, color: token.colorTextSecondary }}>
+            <EditOutlined style={{ marginRight: 6 }} />Manual Status Override
+          </Divider>
+          <Space.Compact style={{ width: '100%' }}>
+            <Select
+              style={{ flex: 1 }}
+              placeholder="Select new status…"
+              value={overrideStatus}
+              onChange={setOverrideStatus}
+              options={VALID_STATUSES.map(s => ({ value: s, label: STATUS_CONFIG[s]?.label ?? s }))}
+            />
+            <Button
+              type="primary"
+              icon={<CheckCircleOutlined />}
+              loading={saving}
+              disabled={!overrideStatus || overrideStatus === f.status}
+              onClick={handleOverride}
+            >
+              Apply
+            </Button>
+          </Space.Compact>
+          <Text type="secondary" style={{ fontSize: 11, marginTop: 6, display: 'block' }}>
+            Role-controlled action. Change is logged in the Audit Log.
+          </Text>
+        </>
+      )}
+    </Drawer>
+  );
+}
 
 export default function FlightBoard() {
   const { airportId } = useAppStore();
-  const [flights, setFlights]   = useState([]);
-  const [loading, setLoading]   = useState(false);
-  const [tab, setTab]           = useState('departure');
-  const [date, setDate]         = useState(dayjs());
-  const [search, setSearch]     = useState('');
-  const [liveCount, setLiveCount] = useState(0);
+  const { keycloak } = useAuth();
+  const [flights, setFlights]       = useState([]);
+  const [loading, setLoading]       = useState(false);
+  const [tab, setTab]               = useState('departure');
+  const [date, setDate]             = useState(dayjs());
+  const [search, setSearch]         = useState('');
+  const [liveCount, setLiveCount]   = useState(0);
+  const [selectedFlight, setSelectedFlight] = useState(null);
+  const [drawerOpen, setDrawerOpen]         = useState(false);
+
+  const userRoles = keycloak.tokenParsed?.realm_access?.roles || [];
+  const canOverrideStatus = userRoles.some(r => ['admin', 'supervisor', 'controller'].includes(r));
 
   const fetchFlights = useCallback(async () => {
     setLoading(true);
@@ -231,11 +325,26 @@ export default function FlightBoard() {
     joinAirport(airportId);
     const handleUpdate = (updated) => {
       setFlights(prev => prev.map(f => f.id === updated.id ? { ...f, ...updated } : f));
+      setSelectedFlight(prev => (prev?.id === updated.id ? { ...prev, ...updated } : prev));
       setLiveCount(c => c + 1);
     };
     socket.on('flight:updated', handleUpdate);
     return () => { socket.off('flight:updated', handleUpdate); leaveAirport(airportId); };
   }, [airportId]);
+
+  const handleRowClick = useCallback(async (record) => {
+    setSelectedFlight(record);
+    setDrawerOpen(true);
+    try {
+      const detail = await getFlight(record.id);
+      setSelectedFlight(detail);
+    } catch (_) {}
+  }, []);
+
+  const handleStatusChanged = useCallback((id, newStatus) => {
+    setFlights(prev => prev.map(f => f.id === id ? { ...f, status: newStatus } : f));
+    setSelectedFlight(prev => prev?.id === id ? { ...prev, status: newStatus } : prev);
+  }, []);
 
   const filtered = search
     ? flights.filter(f =>
@@ -247,28 +356,24 @@ export default function FlightBoard() {
     : flights;
 
   const getRowStyle = (record) => {
-    if (record.status === 'cancelled') return { opacity: 0.55, textDecoration: 'line-through', background: '#fff1f0' };
-    if (record.status === 'boarding')  return { background: '#e6fffb' };
-    if (record.status === 'delayed')   return { background: '#fffbe6' };
-    return {};
+    const base = { cursor: 'pointer' };
+    if (record.status === 'cancelled') return { ...base, opacity: 0.55, textDecoration: 'line-through', background: '#fff1f0' };
+    if (record.status === 'boarding')  return { ...base, background: '#e6fffb' };
+    if (record.status === 'delayed')   return { ...base, background: '#fffbe6' };
+    return base;
   };
 
   return (
     <div>
-      {/* Header */}
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Space align="center" size={12}>
           <Title level={3} style={{ margin: 0 }}>Flight Board</Title>
           {liveCount > 0 && (
             <Badge count={liveCount} overflowCount={99} style={{ background: '#52c41a' }}>
               <span style={{
-                background: '#f6ffed',
-                border: '1px solid #52c41a',
-                color: '#237804',
-                borderRadius: 20,
-                padding: '2px 10px',
-                fontSize: 12,
-                fontWeight: 600,
+                background: '#f6ffed', border: '1px solid #52c41a',
+                color: '#237804', borderRadius: 20, padding: '2px 10px',
+                fontSize: 12, fontWeight: 600,
               }}>
                 <WifiOutlined style={{ marginRight: 4 }} />LIVE
               </span>
@@ -284,84 +389,46 @@ export default function FlightBoard() {
             onChange={e => setSearch(e.target.value)}
             allowClear
           />
-          <DatePicker
-            value={date}
-            onChange={d => d && setDate(d)}
-            allowClear={false}
-            style={{ borderRadius: 8 }}
-          />
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={fetchFlights}
-            loading={loading}
-            style={{ borderRadius: 8 }}
-          >
+          <DatePicker value={date} onChange={d => d && setDate(d)} allowClear={false} style={{ borderRadius: 8 }} />
+          <Button icon={<ReloadOutlined />} onClick={fetchFlights} loading={loading} style={{ borderRadius: 8 }}>
             Refresh
           </Button>
         </Space>
       </Row>
 
-      {/* Departure / Arrival Toggle */}
-      <Row style={{ marginBottom: 16 }} gutter={0}>
+      <Row style={{ marginBottom: 16 }}>
         <Col>
           <Space size={0}>
-            <button
-              onClick={() => { setTab('departure'); setLiveCount(0); }}
-              style={{
-                ...(tab === 'departure' ? TAB_STYLE_ACTIVE : TAB_STYLE_INACTIVE),
-                padding: '7px 22px',
-                borderRadius: '8px 0 0 8px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: 14,
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}
-            >
-              <ArrowUpOutlined /> Departures
-              <span style={{
-                background: tab === 'departure' ? 'rgba(255,255,255,0.3)' : '#f0f0f0',
-                borderRadius: 10,
-                padding: '1px 7px',
-                fontSize: 12,
-              }}>
-                {tab === 'departure' ? filtered.length : ''}
-              </span>
-            </button>
-            <button
-              onClick={() => { setTab('arrival'); setLiveCount(0); }}
-              style={{
-                ...(tab === 'arrival' ? TAB_STYLE_ACTIVE : TAB_STYLE_INACTIVE),
-                padding: '7px 22px',
-                borderRadius: '0 8px 8px 0',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: 14,
-                display: 'flex', alignItems: 'center', gap: 6,
-                marginLeft: -1,
-              }}
-            >
-              <ArrowDownOutlined /> Arrivals
-              <span style={{
-                background: tab === 'arrival' ? 'rgba(255,255,255,0.3)' : '#f0f0f0',
-                borderRadius: 10,
-                padding: '1px 7px',
-                fontSize: 12,
-              }}>
-                {tab === 'arrival' ? filtered.length : ''}
-              </span>
-            </button>
+            {['departure', 'arrival'].map((t, i) => (
+              <button
+                key={t}
+                onClick={() => { setTab(t); setLiveCount(0); }}
+                style={{
+                  ...(tab === t ? TAB_ACTIVE : TAB_INACTIVE),
+                  padding: '7px 22px',
+                  borderRadius: i === 0 ? '8px 0 0 8px' : '0 8px 8px 0',
+                  cursor: 'pointer', fontWeight: 600, fontSize: 14,
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  marginLeft: i === 1 ? -1 : 0,
+                }}
+              >
+                {i === 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
+                {i === 0 ? 'Departures' : 'Arrivals'}
+                <span style={{
+                  background: tab === t ? 'rgba(255,255,255,0.3)' : '#f0f0f0',
+                  borderRadius: 10, padding: '1px 7px', fontSize: 12,
+                }}>
+                  {tab === t ? filtered.length : ''}
+                </span>
+              </button>
+            ))}
           </Space>
         </Col>
       </Row>
 
-      {/* Summary pill bar */}
       {filtered.length > 0 && <SummaryBar flights={filtered} />}
 
-      {/* Table */}
-      <Card
-        style={{ borderRadius: 12, overflow: 'hidden' }}
-        bodyStyle={{ padding: 0 }}
-      >
+      <Card style={{ borderRadius: 12, overflow: 'hidden' }} bodyStyle={{ padding: 0 }}>
         <Table
           rowKey="id"
           columns={buildColumns(tab)}
@@ -369,15 +436,22 @@ export default function FlightBoard() {
           loading={loading}
           size="middle"
           scroll={{ x: 700 }}
-          pagination={{
-            pageSize: 50,
-            showSizeChanger: true,
-            showTotal: (t) => `${t} flights`,
-          }}
-          onRow={(record) => ({ style: getRowStyle(record) })}
+          pagination={{ pageSize: 50, showSizeChanger: true, showTotal: t => `${t} flights` }}
+          onRow={(record) => ({
+            style:   getRowStyle(record),
+            onClick: () => handleRowClick(record),
+          })}
           style={{ fontSize: 13 }}
         />
       </Card>
+
+      <FlightDrawer
+        flight={selectedFlight}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        canOverride={canOverrideStatus}
+        onStatusChanged={handleStatusChanged}
+      />
     </div>
   );
 }

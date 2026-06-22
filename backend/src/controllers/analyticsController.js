@@ -320,7 +320,87 @@ async function getResourceUtilization(req, res, next) {
   }
 }
 
+async function getAirlinePerformance(req, res, next) {
+  try {
+    const { airport_id, date = new Date().toISOString().slice(0, 10) } = req.query;
+
+    let where = 'WHERE DATE(f.scheduled_departure) = ?';
+    const params = [date];
+    if (airport_id) {
+      where += ' AND (f.origin_airport_id = ? OR f.destination_airport_id = ?)';
+      params.push(airport_id, airport_id);
+    }
+
+    const [rows] = await db.query(`
+      SELECT
+        a.id                                                      AS airline_id,
+        a.iata_code,
+        a.name                                                    AS airline_name,
+        COUNT(f.id)                                               AS total_flights,
+        COALESCE(SUM(f.status IN ('departed','arrived')), 0)      AS completed,
+        COALESCE(SUM(f.status = 'delayed'), 0)                    AS \`delayed\`,
+        COALESCE(SUM(f.status = 'cancelled'), 0)                  AS cancelled,
+        COALESCE(SUM(f.passenger_count), 0)                       AS total_passengers,
+        ROUND(AVG(
+          CASE WHEN f.actual_departure IS NOT NULL
+               THEN TIMESTAMPDIFF(MINUTE, f.scheduled_departure, f.actual_departure) END
+        ), 1)                                                     AS avg_dep_delay_min,
+        ROUND(
+          100.0 * SUM(CASE WHEN f.actual_departure <= DATE_ADD(f.scheduled_departure, INTERVAL 15 MINUTE)
+                           AND f.actual_departure IS NOT NULL THEN 1 ELSE 0 END)
+          / NULLIF(SUM(f.actual_departure IS NOT NULL), 0)
+        , 1)                                                      AS otp_pct
+      FROM airlines a
+      JOIN flights f ON f.airline_id = a.id
+      ${where}
+      GROUP BY a.id, a.iata_code, a.name
+      ORDER BY total_flights DESC
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getDelayHeatmap(req, res, next) {
+  try {
+    const { airport_id, date = new Date().toISOString().slice(0, 10) } = req.query;
+
+    let where = 'WHERE DATE(scheduled_departure) = ?';
+    const params = [date];
+    if (airport_id) {
+      where += ' AND (origin_airport_id = ? OR destination_airport_id = ?)';
+      params.push(airport_id, airport_id);
+    }
+
+    const [rows] = await db.query(`
+      SELECT
+        HOUR(scheduled_departure)                           AS hour_of_day,
+        COUNT(*)                                            AS total_flights,
+        COALESCE(SUM(status = 'delayed'), 0)                AS delayed_count,
+        COALESCE(SUM(status = 'cancelled'), 0)              AS cancelled_count,
+        ROUND(AVG(
+          CASE WHEN actual_departure IS NOT NULL
+               THEN TIMESTAMPDIFF(MINUTE, scheduled_departure, actual_departure) END
+        ), 1)                                               AS avg_delay_min,
+        ROUND(MAX(
+          CASE WHEN actual_departure IS NOT NULL
+               THEN TIMESTAMPDIFF(MINUTE, scheduled_departure, actual_departure) END
+        ), 1)                                               AS max_delay_min
+      FROM flights ${where}
+      GROUP BY HOUR(scheduled_departure)
+      ORDER BY hour_of_day ASC
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getLiveStats, getAirportComparison,
   getKpiSnapshots, getDelayTrends, getFlightEvents, getResourceUtilization,
+  getAirlinePerformance, getDelayHeatmap,
 };

@@ -1,22 +1,29 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Typography, Space, Tag, Badge } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Typography, Space, Tag, Badge, Button, theme } from 'antd';
 import {
   DashboardOutlined, SwapOutlined, UserOutlined, LogoutOutlined,
   GlobalOutlined, GatewayOutlined, AlertOutlined, ClockCircleOutlined,
+  BulbOutlined, BulbFilled, BellOutlined,
+  BarChartOutlined, LineChartOutlined, RadarChartOutlined, FileSearchOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../../auth/AuthProvider';
 import useAppStore from '../../store/useAppStore';
+import { useNotifications } from '../../hooks/useNotifications';
 import dayjs from 'dayjs';
 
 const { Sider, Header, Content } = Layout;
 const { Text } = Typography;
 
 const NAV_ITEMS = [
-  { key: '/',          icon: <DashboardOutlined />, label: <Link to="/">Dashboard</Link> },
-  { key: '/flights',   icon: <SwapOutlined />,      label: <Link to="/flights">Flight Board</Link> },
-  { key: '/gates',     icon: <GatewayOutlined />,   label: <Link to="/gates">Gate Management</Link> },
-  { key: '/incidents', icon: <AlertOutlined />,     label: <Link to="/incidents">Incidents</Link> },
+  { key: '/',          icon: <DashboardOutlined />,  label: <Link to="/">Dashboard</Link> },
+  { key: '/flights',   icon: <SwapOutlined />,       label: <Link to="/flights">Flight Board</Link> },
+  { key: '/gates',     icon: <GatewayOutlined />,    label: <Link to="/gates">Gate Management</Link> },
+  { key: '/incidents', icon: <AlertOutlined />,      label: <Link to="/incidents">Incidents</Link> },
+  { key: '/airlines',  icon: <BarChartOutlined />,   label: <Link to="/airlines">Airline Performance</Link> },
+  { key: '/trends',    icon: <LineChartOutlined />,  label: <Link to="/trends">Historical Trends</Link> },
+  { key: '/map',       icon: <RadarChartOutlined />, label: <Link to="/map">Live Ops Map</Link> },
+  { key: '/audit',     icon: <FileSearchOutlined />, label: <Link to="/audit">Audit Log</Link> },
 ];
 
 export default function AppLayout({ children }) {
@@ -24,7 +31,9 @@ export default function AppLayout({ children }) {
   const [time, setTime] = useState(dayjs());
   const location = useLocation();
   const { keycloak } = useAuth();
-  const { airportCode, airportName } = useAppStore();
+  const { airportCode, airportName, darkMode, toggleDarkMode } = useAppStore();
+  const { unread, clearUnread } = useNotifications();
+  const { token } = theme.useToken();
 
   useEffect(() => {
     const id = setInterval(() => setTime(dayjs()), 1000);
@@ -81,23 +90,20 @@ export default function AppLayout({ children }) {
 
       <Layout>
         <Header style={{
-          background: '#fff',
-          padding: '0 24px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          borderBottom: '1px solid #f0f0f0',
-          boxShadow: '0 1px 4px rgba(0,21,41,0.08)',
-          position: 'sticky',
-          top: 0,
-          zIndex: 100,
+          background:    token.colorBgContainer,
+          padding:       '0 24px',
+          display:       'flex',
+          alignItems:    'center',
+          justifyContent:'space-between',
+          borderBottom:  `1px solid ${token.colorBorderSecondary}`,
+          boxShadow:     '0 1px 4px rgba(0,21,41,0.08)',
+          position:      'sticky',
+          top:            0,
+          zIndex:         100,
         }}>
           <Space size={12}>
             {airportCode ? (
-              <Tag
-                color="blue"
-                style={{ fontSize: 13, padding: '3px 10px', borderRadius: 6, fontWeight: 600 }}
-              >
+              <Tag color="blue" style={{ fontSize: 13, padding: '3px 10px', borderRadius: 6, fontWeight: 600 }}>
                 ✈ {airportCode} — {airportName}
               </Tag>
             ) : (
@@ -109,10 +115,10 @@ export default function AppLayout({ children }) {
             <Text type="secondary" style={{ fontSize: 12 }}>LIVE</Text>
           </Space>
 
-          <Space size={20}>
+          <Space size={16}>
             <Space size={6}>
-              <ClockCircleOutlined style={{ color: '#8c8c8c', fontSize: 13 }} />
-              <Text style={{ fontFamily: 'monospace', fontSize: 14, color: '#595959', fontWeight: 500 }}>
+              <ClockCircleOutlined style={{ color: token.colorTextSecondary, fontSize: 13 }} />
+              <Text style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 500 }}>
                 {time.format('HH:mm:ss')}
               </Text>
               <Text type="secondary" style={{ fontSize: 11 }}>
@@ -120,24 +126,36 @@ export default function AppLayout({ children }) {
               </Text>
             </Space>
 
+            <Button
+              type="text"
+              size="small"
+              icon={darkMode
+                ? <BulbFilled style={{ color: '#fadb14', fontSize: 16 }} />
+                : <BulbOutlined style={{ fontSize: 16 }} />}
+              onClick={toggleDarkMode}
+              title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            />
+
+            <Badge count={unread} size="small" overflowCount={9}>
+              <Button
+                type="text"
+                size="small"
+                icon={<BellOutlined style={{ fontSize: 16 }} />}
+                onClick={clearUnread}
+                title="Notifications (click to clear)"
+              />
+            </Badge>
+
             <Dropdown menu={userMenu} placement="bottomRight">
               <Space style={{ cursor: 'pointer' }}>
-                <Avatar
-                  icon={<UserOutlined />}
-                  style={{ background: '#1677ff' }}
-                  size="small"
-                />
+                <Avatar icon={<UserOutlined />} style={{ background: '#1677ff' }} size="small" />
                 <Text style={{ fontWeight: 500 }}>{username}</Text>
               </Space>
             </Dropdown>
           </Space>
         </Header>
 
-        <Content style={{
-          margin: '20px 24px',
-          padding: 0,
-          minHeight: 280,
-        }}>
+        <Content style={{ margin: '20px 24px', padding: 0, minHeight: 280 }}>
           {children}
         </Content>
       </Layout>

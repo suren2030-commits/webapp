@@ -1,7 +1,8 @@
 const router = require('express').Router();
 const { body } = require('express-validator');
 const ctrl = require('../controllers/incidentsController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireRole } = require('../middleware/auth');
+const { auditLog } = require('../middleware/auditLog');
 
 const createBody = [
   body('airport_id').isInt({ min: 1 }),
@@ -13,8 +14,17 @@ const createBody = [
 router.get('/stats',   authenticate, ctrl.getStats);
 router.get('/',        authenticate, ctrl.listIncidents);
 router.get('/:id',     authenticate, ctrl.getIncident);
-router.post('/',       authenticate, createBody, ctrl.createIncident);
-router.patch('/:id',   authenticate, ctrl.updateIncident);
+router.post('/',
+  authenticate,
+  requireRole('admin', 'supervisor'),
+  createBody,
+  auditLog('incident_create', 'incident', (req, body) => body?.id, (req) => req.body.title),
+  ctrl.createIncident);
+router.patch('/:id',
+  authenticate,
+  requireRole('admin', 'supervisor'),
+  auditLog('incident_update', 'incident', 'id', (req) => `Status → ${req.body.status || 'updated'}`),
+  ctrl.updateIncident);
 router.post('/:id/updates', authenticate, ctrl.addUpdate);
 
 module.exports = router;
