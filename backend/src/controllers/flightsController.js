@@ -29,14 +29,36 @@ async function listFlights(req, res, next) {
     let where = 'WHERE 1=1';
     const params = [];
 
+    // Flight-type-aware airport filter:
+    // departures = flights where this airport is the origin
+    // arrivals   = flights where this airport is the destination
     if (airport_id) {
-      where += ' AND (f.origin_airport_id = ? OR f.destination_airport_id = ?)';
-      params.push(airport_id, airport_id);
+      if (flight_type === 'departure') {
+        where += ' AND f.origin_airport_id = ?';
+        params.push(airport_id);
+      } else if (flight_type === 'arrival') {
+        where += ' AND f.destination_airport_id = ?';
+        params.push(airport_id);
+      } else {
+        where += ' AND (f.origin_airport_id = ? OR f.destination_airport_id = ?)';
+        params.push(airport_id, airport_id);
+      }
     }
+
+    // Date filter: use the relevant timestamp per flight type
     if (date) {
-      where += ' AND DATE(f.scheduled_departure) = ?';
-      params.push(date);
+      if (flight_type === 'departure') {
+        where += ' AND DATE(f.scheduled_departure) = ?';
+        params.push(date);
+      } else if (flight_type === 'arrival') {
+        where += ' AND DATE(f.scheduled_arrival) = ?';
+        params.push(date);
+      } else {
+        where += ' AND (DATE(f.scheduled_departure) = ? OR DATE(f.scheduled_arrival) = ?)';
+        params.push(date, date);
+      }
     }
+
     if (status) {
       where += ' AND f.status = ?';
       params.push(status);
@@ -53,8 +75,9 @@ async function listFlights(req, res, next) {
     const offset = (parseInt(page) - 1) * parseInt(limit);
     params.push(parseInt(limit), offset);
 
+    const sortCol = flight_type === 'arrival' ? 'f.scheduled_arrival' : 'f.scheduled_departure';
     const [rows] = await db.query(
-      `${FLIGHT_SELECT} ${where} ORDER BY f.scheduled_departure ASC LIMIT ? OFFSET ?`,
+      `${FLIGHT_SELECT} ${where} ORDER BY ${sortCol} ASC LIMIT ? OFFSET ?`,
       params
     );
 

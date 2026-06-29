@@ -10,6 +10,7 @@ import Airlines     from './pages/Airlines';
 import Trends       from './pages/Trends';
 import MapPage      from './pages/Map';
 import Audit        from './pages/Audit';
+import Simulator    from './pages/Simulator';
 import useAppStore  from './store/useAppStore';
 
 export default function App() {
@@ -29,6 +30,7 @@ export default function App() {
               <Route path="/trends"    element={<Trends />} />
               <Route path="/map"       element={<MapPage />} />
               <Route path="/audit"     element={<Audit />} />
+              <Route path="/simulator" element={<Simulator />} />
               <Route path="*"          element={<Navigate to="/" replace />} />
             </Routes>
           </AppLayout>

@@ -5,7 +5,10 @@ const { authenticate } = require('../middleware/auth');
 router.get('/', authenticate, async (req, res, next) => {
   try {
     const [rows] = await db.query(
-      'SELECT id, iata_code, icao_code, name, city, country, timezone FROM airports ORDER BY name'
+      `SELECT a.id, a.iata_code, a.icao_code, a.name, a.city, a.country, a.timezone
+       FROM airports a
+       WHERE EXISTS (SELECT 1 FROM terminals t WHERE t.airport_id = a.id)
+       ORDER BY a.name`
     );
     res.json(rows);
   } catch (err) {

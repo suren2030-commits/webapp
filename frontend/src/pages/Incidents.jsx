@@ -1,634 +1,605 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
-  Table, Tag, Button, Modal, Form, Input, Select, Space, Typography,
-  Row, Col, Card, Drawer, Timeline, Popconfirm, Spin, Alert,
+  Row, Col, Typography, Space, Button, Tag, Select, Input,
+  Drawer, Form, Descriptions, Empty, Pagination, theme,
 } from 'antd';
 import {
-  PlusOutlined, ExclamationCircleOutlined, CheckOutlined, ReloadOutlined,
-  FireOutlined, WarningOutlined,
+  AlertOutlined, PlusOutlined, ReloadOutlined, FireOutlined,
+  ExclamationCircleOutlined, InfoCircleOutlined, CheckCircleOutlined,
+  ClockCircleOutlined, SendOutlined, SearchOutlined,
 } from '@ant-design/icons';
-import {
-  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip as ReTooltip, ResponsiveContainer, Legend,
-} from 'recharts';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import { getIncidents, getStats, createIncident, updateIncident, addUpdate } from '../api/incidents';
+import {
+  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip,
+  ResponsiveContainer, Legend,
+} from 'recharts';
+import { getIncidents, createIncident, updateIncident } from '../api/incidents';
 import useAppStore from '../store/useAppStore';
 import socket, { joinAirport } from '../socket';
 
 dayjs.extend(relativeTime);
 
-const { Title, Text } = Typography;
+const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
-const SEVERITY_CONFIG = {
-  low:      { color: '#8c8c8c', bg: '#f5f5f5',  border: '#d9d9d9',  label: 'Low' },
-  medium:   { color: '#d46b08', bg: '#fff7e6',  border: '#ffd591',  label: 'Medium' },
-  high:     { color: '#cf1322', bg: '#fff1f0',  border: '#ffa39e',  label: 'High' },
-  critical: { color: '#a8071a', bg: '#ffccc7',  border: '#ff4d4f',  label: 'Critical' },
+/* ─── Config ─────────────────────────────────────── */
+const SEV = {
+  critical: { color: '#f5222d', label: 'CRITICAL', icon: <FireOutlined />,             rank: 4 },
+  high:     { color: '#fa8c16', label: 'HIGH',     icon: <ExclamationCircleOutlined />, rank: 3 },
+  medium:   { color: '#fadb14', label: 'MEDIUM',   icon: <ExclamationCircleOutlined />, rank: 2 },
+  low:      { color: '#52c41a', label: 'LOW',      icon: <InfoCircleOutlined />,        rank: 1 },
 };
 
-const STATUS_CONFIG = {
-  open:        { color: '#f5222d', bg: '#fff1f0', label: 'Open' },
-  in_progress: { color: '#d46b08', bg: '#fff7e6', label: 'In Progress' },
-  resolved:    { color: '#52c41a', bg: '#f6ffed', label: 'Resolved' },
-  closed:      { color: '#8c8c8c', bg: '#f5f5f5', label: 'Closed' },
+const STATUS_COLORS = {
+  open:        '#f5222d',
+  in_progress: '#1677ff',
+  resolved:    '#52c41a',
+  closed:      '#8c8c8c',
 };
 
-const TYPE_CONFIG = {
-  weather:     { icon: '🌩️', color: '#1677ff' },
-  technical:   { icon: '⚙️',  color: '#722ed1' },
-  security:    { icon: '🔒', color: '#cf1322' },
-  medical:     { icon: '🏥', color: '#52c41a' },
-  operational: { icon: '✈️',  color: '#13c2c2' },
-  fire:        { icon: '🔥', color: '#f5222d' },
-  other:       { icon: '⚠️',  color: '#8c8c8c' },
-};
+const INCIDENT_TYPES = [
+  'technical', 'weather', 'security', 'medical', 'operational', 'fire', 'other',
+];
 
-function SeverityBadge({ severity }) {
-  const cfg = SEVERITY_CONFIG[severity] || SEVERITY_CONFIG.medium;
-  return (
-    <span style={{
-      background: cfg.bg,
-      color: cfg.color,
-      border: `1px solid ${cfg.border}`,
-      borderRadius: 12,
-      padding: '2px 10px',
-      fontSize: 12,
-      fontWeight: 700,
-      display: 'inline-block',
-      textTransform: 'uppercase',
-      letterSpacing: 0.5,
-    }}>
-      {cfg.label}
-    </span>
-  );
-}
-
-function StatusBadge({ status }) {
-  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.open;
-  return (
-    <span style={{
-      background: cfg.bg,
-      color: cfg.color,
-      borderRadius: 12,
-      padding: '2px 10px',
-      fontSize: 12,
-      fontWeight: 600,
-      display: 'inline-block',
-    }}>
-      {cfg.label}
-    </span>
-  );
-}
-
-function CustomTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null;
+/* ─── Gradient KPI card ──────────────────────────── */
+function KpiCard({ label, value, sub, gradient, icon }) {
   return (
     <div style={{
-      background: 'rgba(20,20,30,0.9)',
-      borderRadius: 8,
-      padding: '8px 12px',
-      color: '#fff',
-      fontSize: 12,
-      border: '1px solid rgba(255,255,255,0.1)',
+      background: gradient, borderRadius: 12, padding: '16px 18px',
+      color: '#fff', position: 'relative', overflow: 'hidden', height: '100%',
     }}>
-      <div style={{ color: 'rgba(255,255,255,0.6)', marginBottom: 4 }}>{label}</div>
-      {payload.map(p => (
-        <div key={p.name} style={{ color: p.fill || p.color }}>
-          {p.name}: <strong>{p.value}</strong>
-        </div>
-      ))}
+      <div style={{ position: 'absolute', right: 10, top: 8, fontSize: 36, opacity: 0.1 }}>{icon}</div>
+      <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: 700, letterSpacing: 0.8 }}>
+        {label.toUpperCase()}
+      </Text>
+      <div style={{ fontSize: 30, fontWeight: 900, lineHeight: 1.1, marginTop: 6 }}>{value}</div>
+      {sub && (
+        <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 4, display: 'block' }}>
+          {sub}
+        </Text>
+      )}
     </div>
   );
 }
 
+/* ─── Incident card ──────────────────────────────── */
+function IncidentCard({ inc, token, onClick }) {
+  const sev   = SEV[inc.severity] || SEV.low;
+  const stCol = STATUS_COLORS[inc.status] || '#8c8c8c';
+  const isOpen = ['open', 'in_progress'].includes(inc.status);
+
+  return (
+    <div
+      onClick={() => onClick(inc)}
+      style={{
+        background:   token.colorBgContainer,
+        border:       `1px solid ${token.colorBorderSecondary}`,
+        borderLeft:   `4px solid ${sev.color}`,
+        borderRadius: '0 10px 10px 0',
+        padding:      '14px 16px',
+        cursor:       'pointer',
+        transition:   'box-shadow 0.2s, transform 0.1s',
+        marginBottom: 8,
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.boxShadow = `0 4px 16px ${sev.color}30`;
+        e.currentTarget.style.transform = 'translateX(2px)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.boxShadow = 'none';
+        e.currentTarget.style.transform = 'translateX(0)';
+      }}
+    >
+      {/* Top row: badges */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{
+          fontSize: 10, fontWeight: 800, letterSpacing: 1.2, color: sev.color,
+          display: 'flex', alignItems: 'center', gap: 4,
+        }}>
+          {sev.icon} {sev.label}
+        </span>
+        <span style={{
+          fontSize: 10, padding: '1px 7px', borderRadius: 20, fontWeight: 700,
+          background: `${stCol}18`, color: stCol, border: `1px solid ${stCol}50`,
+        }}>
+          {inc.status?.replace('_', ' ').toUpperCase()}
+        </span>
+        <Tag style={{ margin: 0, fontSize: 10, lineHeight: '16px', height: 18, padding: '0 5px' }}>
+          {inc.type?.replace(/_/g, ' ')}
+        </Tag>
+        {isOpen && (
+          <span style={{
+            fontSize: 9, padding: '1px 6px', borderRadius: 10, fontWeight: 700,
+            background: '#f5222d18', color: '#f5222d', border: '1px solid #f5222d40',
+          }}>
+            ACTIVE
+          </span>
+        )}
+      </div>
+
+      {/* Title */}
+      <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 4, lineHeight: 1.4 }}>
+        {inc.title}
+      </Text>
+
+      {/* Description preview */}
+      {inc.description && (
+        <Text type="secondary" style={{
+          fontSize: 12, display: 'block', marginBottom: 8,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '90%',
+        }}>
+          {inc.description}
+        </Text>
+      )}
+
+      {/* Meta row */}
+      <Space size={10} wrap>
+        {inc.airport_iata && (
+          <span style={{
+            fontSize: 11, fontWeight: 700, color: token.colorPrimary,
+            background: `${token.colorPrimary}15`,
+            border: `1px solid ${token.colorPrimary}30`,
+            borderRadius: 5, padding: '1px 7px',
+          }}>
+            {inc.airport_iata}
+          </span>
+        )}
+        {inc.affected_flight_number && (
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            ✈ {inc.affected_flight_number}
+          </Text>
+        )}
+        <Text type="secondary" style={{ fontSize: 11 }}>
+          <ClockCircleOutlined style={{ marginRight: 3 }} />
+          {dayjs(inc.created_at).fromNow()}
+        </Text>
+      </Space>
+    </div>
+  );
+}
+
+/* ─── Main component ─────────────────────────────── */
 export default function Incidents() {
   const { airportId } = useAppStore();
-  const [incidents, setIncidents] = useState([]);
-  const [stats, setStats]         = useState({});
-  const [loading, setLoading]     = useState(false);
-  const [createModal, setCreateModal] = useState(false);
-  const [selected, setSelected]   = useState(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [updateText, setUpdateText] = useState('');
+  const { token }     = theme.useToken();
+
+  const [incidents, setIncidents]   = useState([]);
+  const [loading, setLoading]       = useState(false);
+  const [drawer, setDrawer]         = useState({ open: false, inc: null });
+  const [createOpen, setCreateOpen] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(false);
   const [form] = Form.useForm();
 
-  const fetchAll = useCallback(async () => {
+  // Filters
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sevFilter, setSevFilter]       = useState('all');
+  const [search, setSearch]             = useState('');
+  const [page, setPage]                 = useState(1);
+  const PAGE_SIZE = 10;
+
+  const fetchIncidents = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
+      const params = { limit: 200 };
       if (airportId) params.airport_id = airportId;
-      const [list, statsData] = await Promise.all([
-        getIncidents(params),
-        getStats(airportId ? { airport_id: airportId } : {}),
-      ]);
-      setIncidents(list.data);
-      setStats(statsData);
-    } finally {
-      setLoading(false);
-    }
+      const data = await getIncidents(params);
+      setIncidents(data.data || data || []);
+    } finally { setLoading(false); }
   }, [airportId]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchIncidents();
+    if (airportId) joinAirport(airportId);
+  }, [fetchIncidents, airportId]);
 
   useEffect(() => {
-    if (!airportId) return;
-    joinAirport(airportId);
-    const refresh = () => fetchAll();
+    const refresh = () => fetchIncidents();
     socket.on('incident:created', refresh);
     socket.on('incident:updated', refresh);
     return () => { socket.off('incident:created', refresh); socket.off('incident:updated', refresh); };
-  }, [airportId, fetchAll]);
+  }, [fetchIncidents]);
 
-  const openDetail = async (id) => {
-    const { default: client } = await import('../api/client');
-    const full = await client.get(`/api/incidents/${id}`).then(r => r.data);
-    setSelected(full);
-    setDrawerOpen(true);
-  };
+  /* ── Computed stats ── */
+  const openCount     = incidents.filter(i => i.status === 'open').length;
+  const inProgCount   = incidents.filter(i => i.status === 'in_progress').length;
+  const critCount     = incidents.filter(i => i.severity === 'critical' && !['resolved','closed'].includes(i.status)).length;
+  const resolvedToday = incidents.filter(i => i.status === 'resolved' && dayjs(i.updated_at).isAfter(dayjs().startOf('day'))).length;
+  const criticalAlerts = incidents.filter(i => i.severity === 'critical' && i.status === 'open');
 
+  /* ── Filter + sort ── */
+  const filtered = incidents.filter(i => {
+    if (statusFilter !== 'all' && i.status !== statusFilter) return false;
+    if (sevFilter !== 'all' && i.severity !== sevFilter) return false;
+    if (search && !i.title.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+  const sorted = [...filtered].sort((a, b) => {
+    const rd = (SEV[b.severity]?.rank || 0) - (SEV[a.severity]?.rank || 0);
+    if (rd !== 0) return rd;
+    return dayjs(b.created_at).valueOf() - dayjs(a.created_at).valueOf();
+  });
+  const paginated = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  /* ── Chart data ── */
+  const sevData = Object.keys(SEV)
+    .map(k => ({ name: SEV[k].label, value: incidents.filter(i => i.severity === k).length, color: SEV[k].color }))
+    .filter(d => d.value > 0);
+
+  const typeData = INCIDENT_TYPES
+    .map(t => ({ name: t.replace(/_/g, ' '), value: incidents.filter(i => i.type === t).length }))
+    .filter(d => d.value > 0).sort((a, b) => b.value - a.value).slice(0, 6);
+
+  /* ── Handlers ── */
   const handleCreate = async () => {
     const values = await form.validateFields();
-    if (airportId) values.airport_id = airportId;
-    await createIncident(values);
-    setCreateModal(false);
+    await createIncident({ ...values, airport_id: airportId });
     form.resetFields();
-    fetchAll();
+    setCreateOpen(false);
+    fetchIncidents();
   };
 
   const handleStatusChange = async (id, status) => {
-    await updateIncident(id, { status });
-    if (selected?.id === id) {
-      const { default: client } = await import('../api/client');
-      const full = await client.get(`/api/incidents/${id}`).then(r => r.data);
-      setSelected(full);
-    }
-    fetchAll();
-  };
-
-  const handleAddUpdate = async () => {
-    if (!updateText.trim() || !selected) return;
-    await addUpdate(selected.id, { update_text: updateText });
-    setUpdateText('');
-    const { default: client } = await import('../api/client');
-    const full = await client.get(`/api/incidents/${selected.id}`).then(r => r.data);
-    setSelected(full);
-  };
-
-  const criticalOpen = incidents.filter(i => i.severity === 'critical' && i.status !== 'resolved' && i.status !== 'closed');
-  const highOpen     = incidents.filter(i => i.severity === 'high'     && i.status !== 'resolved' && i.status !== 'closed');
-
-  // Chart data
-  const severityData = ['low', 'medium', 'high', 'critical'].map(s => ({
-    name: SEVERITY_CONFIG[s].label,
-    value: incidents.filter(i => i.severity === s).length,
-    fill: SEVERITY_CONFIG[s].color,
-  })).filter(d => d.value > 0);
-
-  const typeData = Object.keys(TYPE_CONFIG).map(t => ({
-    type: t,
-    icon: TYPE_CONFIG[t].icon,
-    count: incidents.filter(i => i.type === t).length,
-    fill: TYPE_CONFIG[t].color,
-  })).filter(d => d.count > 0).sort((a, b) => b.count - a.count);
-
-  const columns = [
-    {
-      title: '',
-      dataIndex: 'type',
-      width: 40,
-      render: (v) => (
-        <span style={{ fontSize: 18 }}>{TYPE_CONFIG[v]?.icon || '⚠️'}</span>
-      ),
-    },
-    {
-      title: 'Incident',
-      dataIndex: 'title',
-      render: (v, r) => (
-        <div>
-          <Text
-            strong
-            style={{ cursor: 'pointer', fontSize: 14 }}
-            onClick={() => openDetail(r.id)}
-          >
-            {v}
-          </Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            {r.airport_iata} · {dayjs(r.created_at).fromNow()}
-            {r.affected_flight_number && (
-              <span style={{
-                marginLeft: 8,
-                background: '#f0f5ff', color: '#2f54eb',
-                borderRadius: 4, padding: '0 5px', fontSize: 11,
-              }}>
-                ✈ {r.affected_flight_number}
-              </span>
-            )}
-          </Text>
-        </div>
-      ),
-    },
-    {
-      title: 'Severity',
-      dataIndex: 'severity',
-      width: 110,
-      filters: ['low','medium','high','critical'].map(v => ({ text: SEVERITY_CONFIG[v].label, value: v })),
-      onFilter: (val, rec) => rec.severity === val,
-      sorter: (a, b) => ['low','medium','high','critical'].indexOf(a.severity) - ['low','medium','high','critical'].indexOf(b.severity),
-      render: (v) => <SeverityBadge severity={v} />,
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      width: 120,
-      filters: Object.keys(STATUS_CONFIG).map(v => ({ text: STATUS_CONFIG[v].label, value: v })),
-      onFilter: (val, rec) => rec.status === val,
-      render: (v) => <StatusBadge status={v} />,
-    },
-    {
-      title: 'Actions',
-      width: 180,
-      render: (_, r) => (
-        <Space size={4}>
-          {r.status === 'open' && (
-            <Button size="small" onClick={() => handleStatusChange(r.id, 'in_progress')}
-              style={{ fontSize: 11 }}>
-              Start
-            </Button>
-          )}
-          {r.status === 'in_progress' && (
-            <Popconfirm title="Mark as resolved?" onConfirm={() => handleStatusChange(r.id, 'resolved')}>
-              <Button size="small" type="primary" icon={<CheckOutlined />} style={{ fontSize: 11 }}>
-                Resolve
-              </Button>
-            </Popconfirm>
-          )}
-          <Button size="small" onClick={() => openDetail(r.id)} style={{ fontSize: 11 }}>
-            Details
-          </Button>
-        </Space>
-      ),
-    },
-  ];
-
-  const getRowStyle = (record) => {
-    if (record.severity === 'critical' && record.status !== 'resolved' && record.status !== 'closed') {
-      return { background: '#fff1f0', borderLeft: '3px solid #f5222d' };
-    }
-    if (record.severity === 'high' && record.status !== 'resolved' && record.status !== 'closed') {
-      return { background: '#fffbe6' };
-    }
-    return {};
+    setStatusLoading(true);
+    try {
+      await updateIncident(id, { status });
+      setDrawer(d => ({ ...d, inc: { ...d.inc, status } }));
+      fetchIncidents();
+    } finally { setStatusLoading(false); }
   };
 
   return (
-    <div>
-      {/* Critical alert banner */}
-      {criticalOpen.length > 0 && (
-        <Alert
-          message={
-            <Space>
-              <FireOutlined style={{ color: '#f5222d' }} />
-              <Text strong style={{ color: '#a8071a' }}>
-                {criticalOpen.length} CRITICAL incident{criticalOpen.length > 1 ? 's' : ''} require immediate attention
-              </Text>
-              {criticalOpen.slice(0, 3).map(i => (
-                <span
-                  key={i.id}
-                  onClick={() => openDetail(i.id)}
-                  style={{
-                    cursor: 'pointer',
-                    background: '#a8071a',
-                    color: '#fff',
-                    borderRadius: 4,
-                    padding: '1px 8px',
-                    fontSize: 12,
-                  }}
-                >
-                  {i.title.length > 30 ? i.title.slice(0, 30) + '…' : i.title}
-                </span>
-              ))}
-            </Space>
-          }
-          type="error"
-          showIcon={false}
-          style={{ marginBottom: 16, borderRadius: 10 }}
-          closable
-        />
-      )}
+    <div style={{ background: token.colorBgLayout, minHeight: '100%', paddingBottom: 24 }}>
 
-      {highOpen.length > 0 && criticalOpen.length === 0 && (
-        <Alert
-          message={`${highOpen.length} HIGH severity incident${highOpen.length > 1 ? 's' : ''} in progress`}
-          type="warning"
-          showIcon
-          icon={<WarningOutlined />}
-          style={{ marginBottom: 16, borderRadius: 10 }}
-          closable
-        />
-      )}
+      {/* Critical alert ribbons */}
+      {criticalAlerts.map(inc => (
+        <div key={inc.id} style={{
+          background: 'linear-gradient(135deg, #a8071a, #f5222d)',
+          borderRadius: 10, padding: '10px 16px', marginBottom: 8,
+          display: 'flex', alignItems: 'center', gap: 12, color: '#fff',
+        }}>
+          <FireOutlined style={{ fontSize: 16 }} />
+          <Text style={{ color: '#fff', fontWeight: 700 }}>CRITICAL:</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.9)' }}>{inc.title}</Text>
+          <span style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.7 }}>
+            {inc.airport_iata} · {dayjs(inc.created_at).fromNow()}
+          </span>
+        </div>
+      ))}
 
-      {/* Header */}
-      <Row justify="space-between" align="middle" style={{ marginBottom: 20 }}>
-        <Title level={3} style={{ margin: 0 }}>Incidents</Title>
+      {/* Page header */}
+      <div style={{
+        background: token.colorBgContainer, border: `1px solid ${token.colorBorderSecondary}`,
+        borderRadius: 14, padding: '16px 20px', marginBottom: 16,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      }}>
+        <div>
+          <Title level={4} style={{ margin: 0 }}>
+            <AlertOutlined style={{ marginRight: 8, color: '#f5222d' }} />
+            Incidents
+          </Title>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {incidents.length} total · {openCount + inProgCount} active · real-time updates
+          </Text>
+        </div>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={fetchAll} loading={loading} style={{ borderRadius: 8 }} />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModal(true)} style={{ borderRadius: 8 }}>
+          <Button icon={<ReloadOutlined />} onClick={fetchIncidents} loading={loading}>Refresh</Button>
+          <Button type="primary" icon={<PlusOutlined />} danger
+            onClick={() => { form.resetFields(); setCreateOpen(true); }}>
             Report Incident
           </Button>
         </Space>
-      </Row>
+      </div>
 
-      {/* KPI Summary Cards */}
+      {/* KPI row */}
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-        {[
-          { label: 'Open', value: stats.open_count ?? 0, color: '#f5222d', bg: '#fff1f0' },
-          { label: 'In Progress', value: stats.in_progress_count ?? 0, color: '#d46b08', bg: '#fff7e6' },
-          { label: 'Critical', value: stats.critical_count ?? 0, color: '#a8071a', bg: '#ffccc7' },
-          { label: 'Resolved Today', value: stats.resolved_today ?? 0, color: '#389e0d', bg: '#f6ffed' },
-        ].map(item => (
-          <Col key={item.label} xs={12} sm={6}>
-            <div style={{
-              background: item.bg,
-              border: `1px solid ${item.color}30`,
-              borderRadius: 12,
-              padding: '14px 18px',
-              borderLeft: `4px solid ${item.color}`,
-            }}>
-              <Text style={{ color: item.color, fontSize: 12, fontWeight: 500 }}>{item.label}</Text>
-              <div style={{ fontSize: 28, fontWeight: 700, color: item.color, lineHeight: 1.2, marginTop: 4 }}>
-                {item.value}
+        <Col xs={12} sm={6}>
+          <KpiCard label="Open" value={openCount} sub="needs attention"
+            gradient="linear-gradient(135deg,#f5222d,#a8071a)" icon={<AlertOutlined />} />
+        </Col>
+        <Col xs={12} sm={6}>
+          <KpiCard label="In Progress" value={inProgCount} sub="being handled"
+            gradient="linear-gradient(135deg,#1677ff,#003eb3)" icon={<ClockCircleOutlined />} />
+        </Col>
+        <Col xs={12} sm={6}>
+          <KpiCard label="Critical Active" value={critCount} sub="immediate action"
+            gradient={critCount > 0
+              ? 'linear-gradient(135deg,#ff4d4f,#cf1322)'
+              : 'linear-gradient(135deg,#389e0d,#135200)'}
+            icon={<FireOutlined />} />
+        </Col>
+        <Col xs={12} sm={6}>
+          <KpiCard label="Resolved Today" value={resolvedToday} sub="closed today"
+            gradient="linear-gradient(135deg,#52c41a,#237804)" icon={<CheckCircleOutlined />} />
+        </Col>
+      </Row>
+
+      {/* Main body */}
+      <Row gutter={[16, 16]}>
+        {/* LEFT: Incident list */}
+        <Col xs={24} lg={15}>
+          <div style={{
+            background: token.colorBgContainer,
+            border: `1px solid ${token.colorBorderSecondary}`,
+            borderRadius: 14, padding: 16,
+          }}>
+            {/* Filter bar */}
+            <div style={{ marginBottom: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {/* Status tabs */}
+              <div style={{
+                display: 'flex', gap: 4,
+                background: token.colorBgLayout,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                borderRadius: 8, padding: 3,
+              }}>
+                {[
+                  { key: 'all',         label: 'All' },
+                  { key: 'open',        label: 'Open' },
+                  { key: 'in_progress', label: 'In Progress' },
+                  { key: 'resolved',    label: 'Resolved' },
+                ].map(opt => (
+                  <button key={opt.key}
+                    onClick={() => { setStatusFilter(opt.key); setPage(1); }}
+                    style={{
+                      border: 'none', cursor: 'pointer', borderRadius: 6,
+                      padding: '3px 12px', fontSize: 12, fontWeight: 600, transition: 'all 0.15s',
+                      background: statusFilter === opt.key ? token.colorPrimary : 'transparent',
+                      color: statusFilter === opt.key ? '#fff' : token.colorTextSecondary,
+                    }}>
+                    {opt.label}
+                  </button>
+                ))}
               </div>
-            </div>
-          </Col>
-        ))}
-      </Row>
 
-      {/* Charts Row */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
-        <Col xs={24} md={10}>
-          <Card
-            title={<span style={{ fontWeight: 600 }}>Severity Breakdown</span>}
-            style={{ borderRadius: 12 }}
-            bodyStyle={{ padding: '12px 16px' }}
-          >
-            {severityData.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>No incidents</div>
-            ) : (
-              <>
-                <ResponsiveContainer width="100%" height={160}>
-                  <PieChart>
-                    <Pie
-                      data={severityData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={40}
-                      outerRadius={70}
-                      paddingAngle={3}
-                      dataKey="value"
-                    >
-                      {severityData.map(entry => (
-                        <Cell key={entry.name} fill={entry.fill} />
-                      ))}
-                    </Pie>
-                    <ReTooltip content={<CustomTooltip />} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <Row gutter={[6, 4]} style={{ marginTop: 4 }}>
-                  {severityData.map(d => (
-                    <Col key={d.name}>
-                      <Space size={4}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: d.fill, display: 'inline-block' }} />
-                        <Text style={{ fontSize: 12 }}>{d.name}: <strong>{d.value}</strong></Text>
-                      </Space>
-                    </Col>
-                  ))}
-                </Row>
-              </>
-            )}
-          </Card>
-        </Col>
-
-        <Col xs={24} md={14}>
-          <Card
-            title={<span style={{ fontWeight: 600 }}>Incidents by Type</span>}
-            style={{ borderRadius: 12 }}
-            bodyStyle={{ padding: '12px 16px' }}
-          >
-            {typeData.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>No incidents</div>
-            ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart
-                  data={typeData}
-                  layout="vertical"
-                  margin={{ top: 0, right: 30, left: 30, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f0f0f0" />
-                  <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
-                  <YAxis
-                    dataKey="type"
-                    type="category"
-                    tick={{ fontSize: 12 }}
-                    width={80}
-                    tickFormatter={(v) => `${TYPE_CONFIG[v]?.icon || ''} ${v}`}
-                  />
-                  <ReTooltip content={<CustomTooltip />} />
-                  <Bar dataKey="count" name="Count" radius={[0, 6, 6, 0]}>
-                    {typeData.map(entry => (
-                      <Cell key={entry.type} fill={entry.fill} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Incident Table */}
-      <Card style={{ borderRadius: 12 }} bodyStyle={{ padding: 0 }}>
-        <Spin spinning={loading}>
-          <Table
-            rowKey="id"
-            columns={columns}
-            dataSource={incidents}
-            size="middle"
-            pagination={{ pageSize: 15, showTotal: t => `${t} incidents` }}
-            onRow={(record) => ({ style: getRowStyle(record) })}
-          />
-        </Spin>
-      </Card>
-
-      {/* Create Modal */}
-      <Modal
-        title={
-          <Space>
-            <ExclamationCircleOutlined style={{ color: '#f5222d' }} />
-            <span>Report New Incident</span>
-          </Space>
-        }
-        open={createModal}
-        onOk={handleCreate}
-        onCancel={() => { setCreateModal(false); form.resetFields(); }}
-        okText="Report"
-        width={520}
-      >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="title" label="Title" rules={[{ required: true }]}>
-            <Input placeholder="Brief description of the incident" />
-          </Form.Item>
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item name="type" label="Type" rules={[{ required: true }]}>
-                <Select
-                  options={Object.entries(TYPE_CONFIG).map(([k, v]) => ({
-                    value: k,
-                    label: `${v.icon} ${k}`,
-                  }))}
-                />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="severity" label="Severity" rules={[{ required: true }]}>
-                <Select
-                  options={Object.entries(SEVERITY_CONFIG).map(([k, v]) => ({
-                    value: k,
-                    label: (
-                      <span style={{ color: v.color, fontWeight: 600 }}>{v.label}</span>
-                    ),
-                  }))}
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-          {!airportId && (
-            <Form.Item name="airport_id" label="Airport ID" rules={[{ required: true }]}>
-              <Input type="number" placeholder="Airport ID" />
-            </Form.Item>
-          )}
-          <Form.Item name="description" label="Description">
-            <TextArea rows={3} placeholder="Additional details, impact, and immediate actions…" />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Detail Drawer */}
-      <Drawer
-        title={
-          selected ? (
-            <Space>
-              <span style={{ fontSize: 18 }}>{TYPE_CONFIG[selected.type]?.icon || '⚠️'}</span>
-              <span style={{ fontWeight: 700 }}>#{selected.id} — {selected.title}</span>
-            </Space>
-          ) : ''
-        }
-        open={drawerOpen}
-        onClose={() => { setDrawerOpen(false); setSelected(null); setUpdateText(''); }}
-        width={500}
-        extra={
-          selected && (
-            <Space>
-              {selected.status === 'open' && (
-                <Button size="small" onClick={() => handleStatusChange(selected.id, 'in_progress')}>
-                  Start Response
-                </Button>
-              )}
-              {selected.status === 'in_progress' && (
-                <Popconfirm title="Mark as resolved?" onConfirm={() => handleStatusChange(selected.id, 'resolved')}>
-                  <Button size="small" type="primary" icon={<CheckOutlined />}>Resolve</Button>
-                </Popconfirm>
-              )}
-            </Space>
-          )
-        }
-      >
-        {selected && (
-          <Space direction="vertical" style={{ width: '100%' }} size={20}>
-            <Row gutter={8}>
-              <Col><SeverityBadge severity={selected.severity} /></Col>
-              <Col><StatusBadge status={selected.status} /></Col>
-              <Col>
-                <Text type="secondary" style={{ fontSize: 12 }}>{selected.airport_name}</Text>
-              </Col>
-            </Row>
-
-            {selected.description && (
-              <Card size="small" style={{ background: '#fafafa', borderRadius: 8 }} bodyStyle={{ padding: 12 }}>
-                <Text>{selected.description}</Text>
-              </Card>
-            )}
-
-            <div>
-              <Text strong style={{ fontSize: 14 }}>Timeline</Text>
-              <Timeline
-                style={{ marginTop: 12 }}
-                items={[
-                  {
-                    color: 'red',
-                    children: (
-                      <>
-                        <Text strong>Incident Reported</Text>
-                        <br />
-                        <Text type="secondary" style={{ fontSize: 11 }}>
-                          {dayjs(selected.created_at).format('DD MMM YYYY, HH:mm')}
-                        </Text>
-                      </>
-                    ),
-                  },
-                  ...(selected.updates || []).map(u => ({
-                    color: 'blue',
-                    children: (
-                      <>
-                        <Text>{u.update_text}</Text>
-                        <br />
-                        <Text type="secondary" style={{ fontSize: 11 }}>
-                          {u.author_name || 'Ops'} · {dayjs(u.created_at).format('DD MMM, HH:mm')}
-                        </Text>
-                      </>
-                    ),
-                  })),
-                  ...(selected.resolved_at ? [{
-                    color: 'green',
-                    children: (
-                      <>
-                        <Text strong>Resolved</Text>
-                        <br />
-                        <Text type="secondary" style={{ fontSize: 11 }}>
-                          {dayjs(selected.resolved_at).format('DD MMM YYYY, HH:mm')}
-                        </Text>
-                      </>
-                    ),
-                  }] : []),
+              <Select
+                value={sevFilter}
+                onChange={v => { setSevFilter(v); setPage(1); }}
+                style={{ width: 130 }} size="small"
+                options={[
+                  { value: 'all',      label: 'All severity' },
+                  { value: 'critical', label: '🔴 Critical' },
+                  { value: 'high',     label: '🟠 High' },
+                  { value: 'medium',   label: '🟡 Medium' },
+                  { value: 'low',      label: '🟢 Low' },
                 ]}
+              />
+
+              <Input
+                prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} />}
+                placeholder="Search incidents…"
+                value={search}
+                onChange={e => { setSearch(e.target.value); setPage(1); }}
+                allowClear size="small"
+                style={{ flex: 1, minWidth: 160 }}
               />
             </div>
 
-            {selected.status !== 'resolved' && selected.status !== 'closed' && (
-              <div>
-                <Text strong>Add Update</Text>
-                <TextArea
-                  rows={3}
-                  style={{ marginTop: 8, borderRadius: 8 }}
-                  value={updateText}
-                  onChange={e => setUpdateText(e.target.value)}
-                  placeholder="What is the current status?"
-                />
-                <Button
-                  type="primary"
-                  style={{ marginTop: 8, borderRadius: 8 }}
-                  onClick={handleAddUpdate}
-                  disabled={!updateText.trim()}
-                >
-                  Post Update
-                </Button>
+            {/* Incident cards */}
+            {paginated.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={<Text type="secondary">No incidents match your filters</Text>}
+                style={{ padding: '40px 0' }}
+              />
+            ) : (
+              paginated.map(inc => (
+                <IncidentCard key={inc.id} inc={inc} token={token}
+                  onClick={i => setDrawer({ open: true, inc: i })} />
+              ))
+            )}
+
+            {sorted.length > PAGE_SIZE && (
+              <div style={{ textAlign: 'right', marginTop: 12 }}>
+                <Pagination current={page} pageSize={PAGE_SIZE} total={sorted.length}
+                  onChange={setPage} size="small" showTotal={t => `${t} incidents`} />
               </div>
             )}
+          </div>
+        </Col>
+
+        {/* RIGHT: Charts */}
+        <Col xs={24} lg={9}>
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <div style={{
+              background: token.colorBgContainer, border: `1px solid ${token.colorBorderSecondary}`,
+              borderRadius: 14, padding: 16,
+            }}>
+              <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
+                Severity Breakdown
+              </Text>
+              {sevData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={sevData} cx="50%" cy="50%"
+                      innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value">
+                      {sevData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                    </Pie>
+                    <ReTooltip contentStyle={{
+                      background: 'rgba(15,20,35,0.95)',
+                      border: `1px solid ${token.colorBorderSecondary}`,
+                      borderRadius: 8, color: '#fff', fontSize: 12,
+                    }} />
+                    <Legend iconType="circle" iconSize={8}
+                      formatter={v => <span style={{ fontSize: 11, color: token.colorText }}>{v}</span>} />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No data" style={{ padding: '20px 0' }} />
+              )}
+            </div>
+
+            <div style={{
+              background: token.colorBgContainer, border: `1px solid ${token.colorBorderSecondary}`,
+              borderRadius: 14, padding: 16,
+            }}>
+              <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 12 }}>
+                By Type
+              </Text>
+              {typeData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={typeData} layout="vertical" margin={{ left: 0, right: 20 }}>
+                    <XAxis type="number" tick={{ fontSize: 10, fill: token.colorTextSecondary }}
+                      axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={100}
+                      tick={{ fontSize: 10, fill: token.colorTextSecondary }} axisLine={false} tickLine={false} />
+                    <ReTooltip contentStyle={{
+                      background: 'rgba(15,20,35,0.95)',
+                      border: `1px solid ${token.colorBorderSecondary}`,
+                      borderRadius: 8, color: '#fff', fontSize: 12,
+                    }} />
+                    <Bar dataKey="value" fill={token.colorPrimary} radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No data" style={{ padding: '20px 0' }} />
+              )}
+            </div>
           </Space>
-        )}
+        </Col>
+      </Row>
+
+      {/* ── Detail Drawer ── */}
+      <Drawer
+        title={null}
+        open={drawer.open}
+        onClose={() => setDrawer({ open: false, inc: null })}
+        width={480}
+        styles={{ body: { padding: 0 } }}
+      >
+        {drawer.inc && (() => {
+          const inc   = drawer.inc;
+          const sev   = SEV[inc.severity] || SEV.low;
+          const stCol = STATUS_COLORS[inc.status] || '#8c8c8c';
+          return (
+            <div>
+              {/* Accent header */}
+              <div style={{
+                background:    `linear-gradient(135deg, ${sev.color}22, ${sev.color}08)`,
+                borderBottom:  `3px solid ${sev.color}`,
+                padding:       '20px 24px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: sev.color, letterSpacing: 1.2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {sev.icon} {sev.label}
+                  </span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, padding: '1px 8px', borderRadius: 20,
+                    background: `${stCol}20`, color: stCol, border: `1px solid ${stCol}40`,
+                  }}>
+                    {inc.status?.replace('_', ' ').toUpperCase()}
+                  </span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: token.colorTextSecondary }}>#{inc.id}</span>
+                </div>
+                <Title level={4} style={{ margin: 0, lineHeight: 1.3 }}>{inc.title}</Title>
+              </div>
+
+              <div style={{ padding: '20px 24px' }}>
+                <Descriptions column={2} size="small" style={{ marginBottom: 20 }}
+                  labelStyle={{ color: token.colorTextSecondary, fontSize: 12 }}
+                  contentStyle={{ fontSize: 13, fontWeight: 600 }}>
+                  <Descriptions.Item label="Airport">{inc.airport_iata || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Type">{inc.type?.replace(/_/g, ' ') || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Flight">{inc.affected_flight_number || '—'}</Descriptions.Item>
+                  <Descriptions.Item label="Reported">{dayjs(inc.created_at).format('DD MMM, HH:mm')}</Descriptions.Item>
+                </Descriptions>
+
+                {inc.description && (
+                  <div style={{
+                    background: token.colorBgLayout,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    borderRadius: 10, padding: '14px 16px', marginBottom: 20,
+                  }}>
+                    <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>
+                      DESCRIPTION
+                    </Text>
+                    <Paragraph style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.6 }}>
+                      {inc.description}
+                    </Paragraph>
+                  </div>
+                )}
+
+                {inc.status !== 'closed' && (
+                  <div style={{
+                    background: token.colorBgLayout,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    borderRadius: 10, padding: '14px 16px',
+                  }}>
+                    <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 10 }}>
+                      UPDATE STATUS
+                    </Text>
+                    <Space wrap>
+                      {inc.status === 'open' && (
+                        <Button size="small" type="primary" icon={<SendOutlined />}
+                          loading={statusLoading}
+                          onClick={() => handleStatusChange(inc.id, 'in_progress')}>
+                          Start Response
+                        </Button>
+                      )}
+                      {inc.status === 'in_progress' && (
+                        <Button size="small" type="primary"
+                          style={{ background: '#52c41a', borderColor: '#52c41a' }}
+                          icon={<CheckCircleOutlined />}
+                          loading={statusLoading}
+                          onClick={() => handleStatusChange(inc.id, 'resolved')}>
+                          Mark Resolved
+                        </Button>
+                      )}
+                      {['resolved', 'in_progress'].includes(inc.status) && (
+                        <Button size="small" type="text"
+                          style={{ color: token.colorTextSecondary }}
+                          loading={statusLoading}
+                          onClick={() => handleStatusChange(inc.id, 'closed')}>
+                          Close Incident
+                        </Button>
+                      )}
+                    </Space>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </Drawer>
+
+      {/* ── Create Incident Drawer ── */}
+      <Drawer
+        title={
+          <Space>
+            <AlertOutlined style={{ color: '#f5222d' }} />
+            <span>Report New Incident</span>
+          </Space>
+        }
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        width={480}
+        extra={<Button type="primary" danger onClick={handleCreate}>Submit</Button>}
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item name="title" label="Incident Title" rules={[{ required: true }]}>
+            <Input placeholder="Brief description of the incident" />
+          </Form.Item>
+          <Form.Item name="type" label="Type" rules={[{ required: true }]}>
+            <Select options={INCIDENT_TYPES.map(t => ({ value: t, label: t.replace(/_/g, ' ') }))} />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="severity" label="Severity" rules={[{ required: true }]}>
+                <Select options={Object.keys(SEV).map(k => ({
+                  value: k,
+                  label: <span style={{ color: SEV[k].color, fontWeight: 700 }}>{SEV[k].label}</span>,
+                }))} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="affected_flight_number" label="Affected Flight">
+                <Input placeholder="e.g. AI202" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="description" label="Description">
+            <TextArea rows={4} placeholder="Detailed description, actions taken, etc." />
+          </Form.Item>
+        </Form>
       </Drawer>
     </div>
   );

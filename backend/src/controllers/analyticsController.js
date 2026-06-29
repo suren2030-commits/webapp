@@ -1,16 +1,33 @@
 const db = require('../config/db');
 const clickhouse = require('../config/clickhouse');
 
+/**
+ * Build the correct WHERE clause for "flights operating at this airport".
+ * - Departures: this airport is the origin  (scheduled_departure date)
+ * - Arrivals:   this airport is the destination (scheduled_arrival date)
+ * Without airport_id, returns all flights for the date.
+ */
+function flightWhere(airport_id, date) {
+  if (!airport_id) {
+    return {
+      clause: "WHERE DATE(scheduled_departure) = ?",
+      params: [date],
+    };
+  }
+  return {
+    clause: `WHERE (
+      (flight_type = 'departure' AND DATE(scheduled_departure) = ? AND origin_airport_id      = ?)
+      OR
+      (flight_type = 'arrival'   AND DATE(scheduled_arrival)   = ? AND destination_airport_id = ?)
+    )`,
+    params: [date, airport_id, date, airport_id],
+  };
+}
+
 async function getLiveStats(req, res, next) {
   try {
     const { airport_id, date = new Date().toISOString().slice(0, 10) } = req.query;
-
-    let where = 'WHERE DATE(scheduled_departure) = ?';
-    const params = [date];
-    if (airport_id) {
-      where += ' AND (origin_airport_id = ? OR destination_airport_id = ?)';
-      params.push(airport_id, airport_id);
-    }
+    const { clause: where, params } = flightWhere(airport_id, date);
 
     const incidentWhere  = airport_id ? 'WHERE airport_id = ?' : '';
     const incidentParams = airport_id ? [airport_id] : [];
@@ -18,49 +35,72 @@ async function getLiveStats(req, res, next) {
     const gateExtra  = airport_id ? 'AND t.airport_id = ?' : '';
     const gateParams = airport_id ? [airport_id] : [];
 
-    const runwayExtra  = airport_id ? 'AND (origin_airport_id = ? OR destination_airport_id = ?)' : '';
+    // Runway movements this hour — same flight_type-aware filter
+    const runwayWhere = airport_id
+      ? `WHERE (
+          (flight_type = 'departure' AND HOUR(scheduled_departure) = HOUR(NOW()) AND DATE(scheduled_departure) = CURDATE() AND origin_airport_id = ?)
+          OR
+          (flight_type = 'arrival'   AND HOUR(scheduled_arrival)   = HOUR(NOW()) AND DATE(scheduled_arrival)   = CURDATE() AND destination_airport_id = ?)
+        )`
+      : "WHERE DATE(scheduled_departure) = CURDATE() AND HOUR(scheduled_departure) = HOUR(NOW())";
     const runwayParams = airport_id ? [airport_id, airport_id] : [];
 
     const [statsRes, peakRes, incidentRes, gateRes, runwayRes] = await Promise.all([
       db.query(`
         SELECT
-          COUNT(*)                                          AS total_flights,
-          SUM(status = 'departed')                          AS \`departed\`,
-          SUM(status = 'arrived')                           AS \`arrived\`,
-          SUM(status = 'delayed')                           AS \`delayed\`,
-          SUM(status = 'cancelled')                         AS \`cancelled\`,
-          SUM(status = 'boarding')                          AS \`boarding\`,
-          SUM(status = 'scheduled')                         AS \`scheduled\`,
-          COALESCE(SUM(passenger_count), 0)                 AS total_passengers,
+          COUNT(*)                                           AS total_flights,
+          SUM(status = 'departed')                           AS \`departed\`,
+          SUM(status = 'arrived')                            AS \`arrived\`,
+          SUM(status = 'delayed')                            AS \`delayed\`,
+          SUM(status = 'cancelled')                          AS \`cancelled\`,
+          SUM(status = 'boarding')                           AS \`boarding\`,
+          SUM(status = 'scheduled')                          AS \`scheduled\`,
+          COALESCE(SUM(passenger_count), 0)                  AS total_passengers,
           ROUND(AVG(
-            CASE WHEN actual_departure IS NOT NULL
+            CASE WHEN flight_type = 'departure' AND actual_departure IS NOT NULL
                  THEN TIMESTAMPDIFF(MINUTE, scheduled_departure, actual_departure) END
-          ), 1)                                             AS avg_departure_delay_min,
+          ), 1)                                              AS avg_departure_delay_min,
           ROUND(AVG(
-            CASE WHEN actual_arrival IS NOT NULL AND scheduled_arrival IS NOT NULL
+            CASE WHEN flight_type = 'arrival' AND actual_arrival IS NOT NULL
                  THEN TIMESTAMPDIFF(MINUTE, scheduled_arrival, actual_arrival) END
-          ), 1)                                             AS avg_arrival_delay_min,
+          ), 1)                                              AS avg_arrival_delay_min,
           ROUND(
-            100.0 * SUM(CASE WHEN actual_departure <= DATE_ADD(scheduled_departure, INTERVAL 15 MINUTE)
-                             AND actual_departure IS NOT NULL THEN 1 ELSE 0 END)
-            / NULLIF(SUM(actual_departure IS NOT NULL), 0)
-          , 1)                                              AS otp_percentage,
+            100.0 * SUM(CASE
+              WHEN flight_type = 'departure' AND actual_departure IS NOT NULL
+                   AND actual_departure <= DATE_ADD(scheduled_departure, INTERVAL 15 MINUTE) THEN 1
+              WHEN flight_type = 'arrival'   AND actual_arrival IS NOT NULL
+                   AND actual_arrival   <= DATE_ADD(scheduled_arrival,   INTERVAL 15 MINUTE) THEN 1
+              ELSE 0 END)
+            / NULLIF(SUM(
+              CASE WHEN flight_type = 'departure' AND actual_departure IS NOT NULL THEN 1
+                   WHEN flight_type = 'arrival'   AND actual_arrival   IS NOT NULL THEN 1
+                   ELSE 0 END
+            ), 0)
+          , 1)                                               AS otp_percentage,
           ROUND(
-            100.0 * SUM(CASE WHEN actual_departure <= DATE_ADD(scheduled_departure, INTERVAL 15 MINUTE)
-                             AND actual_departure IS NOT NULL THEN 1 ELSE 0 END)
-            / NULLIF(SUM(actual_departure IS NOT NULL), 0)
-          , 1)                                              AS departure_otp_pct,
+            100.0 * SUM(CASE WHEN flight_type = 'departure'
+                              AND actual_departure IS NOT NULL
+                              AND actual_departure <= DATE_ADD(scheduled_departure, INTERVAL 15 MINUTE)
+                             THEN 1 ELSE 0 END)
+            / NULLIF(SUM(flight_type = 'departure' AND actual_departure IS NOT NULL), 0)
+          , 1)                                               AS departure_otp_pct,
           ROUND(
-            100.0 * SUM(CASE WHEN actual_arrival <= DATE_ADD(scheduled_arrival, INTERVAL 15 MINUTE)
-                             AND actual_arrival IS NOT NULL THEN 1 ELSE 0 END)
-            / NULLIF(SUM(actual_arrival IS NOT NULL), 0)
-          , 1)                                              AS arrival_otp_pct
+            100.0 * SUM(CASE WHEN flight_type = 'arrival'
+                              AND actual_arrival IS NOT NULL
+                              AND actual_arrival <= DATE_ADD(scheduled_arrival, INTERVAL 15 MINUTE)
+                             THEN 1 ELSE 0 END)
+            / NULLIF(SUM(flight_type = 'arrival' AND actual_arrival IS NOT NULL), 0)
+          , 1)                                               AS arrival_otp_pct
         FROM flights ${where}
       `, params),
 
       db.query(`
         SELECT COALESCE(MAX(cnt), 0) AS peak_hour_flights
-        FROM (SELECT COUNT(*) AS cnt FROM flights ${where} GROUP BY HOUR(scheduled_departure)) sub
+        FROM (
+          SELECT COUNT(*) AS cnt
+          FROM flights ${where}
+          GROUP BY HOUR(CASE WHEN flight_type = 'arrival' THEN scheduled_arrival ELSE scheduled_departure END)
+        ) sub
       `, params),
 
       db.query(`
@@ -83,10 +123,7 @@ async function getLiveStats(req, res, next) {
 
       db.query(`
         SELECT COUNT(*) AS runway_movements_hr
-        FROM flights
-        WHERE DATE(scheduled_departure) = CURDATE()
-          AND HOUR(scheduled_departure) = HOUR(NOW())
-          ${runwayExtra}
+        FROM flights ${runwayWhere}
       `, runwayParams),
     ]);
 
@@ -134,18 +171,24 @@ async function getAirportComparison(req, res, next) {
         COALESCE(SUM(f.status = 'boarding'), 0)                 AS boarding,
         COALESCE(SUM(f.passenger_count), 0)                     AS total_passengers,
         ROUND(
-          100.0 * SUM(CASE WHEN f.actual_departure <= DATE_ADD(f.scheduled_departure, INTERVAL 15 MINUTE)
-                           AND f.actual_departure IS NOT NULL THEN 1 ELSE 0 END)
+          100.0 * SUM(CASE
+            WHEN f.flight_type = 'departure' AND f.actual_departure IS NOT NULL
+                 AND f.actual_departure <= DATE_ADD(f.scheduled_departure, INTERVAL 15 MINUTE) THEN 1
+            WHEN f.flight_type = 'arrival'   AND f.actual_arrival IS NOT NULL
+                 AND f.actual_arrival   <= DATE_ADD(f.scheduled_arrival,   INTERVAL 15 MINUTE) THEN 1
+            ELSE 0 END)
           / NULLIF(SUM(f.status IN ('departed','arrived')), 0)
         , 1)                                                     AS otp_pct
       FROM airports a
-      LEFT JOIN flights f
-        ON (f.origin_airport_id = a.id OR f.destination_airport_id = a.id)
-        AND DATE(f.scheduled_departure) = ?
-      WHERE a.id IN (1,2,3,4)
+      LEFT JOIN flights f ON (
+        (f.flight_type = 'departure' AND f.origin_airport_id      = a.id AND DATE(f.scheduled_departure) = ?)
+        OR
+        (f.flight_type = 'arrival'   AND f.destination_airport_id = a.id AND DATE(f.scheduled_arrival)   = ?)
+      )
+      WHERE EXISTS (SELECT 1 FROM terminals t WHERE t.airport_id = a.id)
       GROUP BY a.id, a.iata_code, a.city
       ORDER BY a.id
-    `, [date]);
+    `, [date, date]);
 
     res.json(rows);
   } catch (err) {
@@ -327,7 +370,11 @@ async function getAirlinePerformance(req, res, next) {
     let where = 'WHERE DATE(f.scheduled_departure) = ?';
     const params = [date];
     if (airport_id) {
-      where += ' AND (f.origin_airport_id = ? OR f.destination_airport_id = ?)';
+      where += ` AND (
+        (f.flight_type = 'departure' AND f.origin_airport_id      = ?)
+        OR
+        (f.flight_type = 'arrival'   AND f.destination_airport_id = ?)
+      )`;
       params.push(airport_id, airport_id);
     }
 
@@ -342,13 +389,21 @@ async function getAirlinePerformance(req, res, next) {
         COALESCE(SUM(f.status = 'cancelled'), 0)                  AS cancelled,
         COALESCE(SUM(f.passenger_count), 0)                       AS total_passengers,
         ROUND(AVG(
-          CASE WHEN f.actual_departure IS NOT NULL
+          CASE WHEN f.flight_type = 'departure' AND f.actual_departure IS NOT NULL
                THEN TIMESTAMPDIFF(MINUTE, f.scheduled_departure, f.actual_departure) END
         ), 1)                                                     AS avg_dep_delay_min,
         ROUND(
-          100.0 * SUM(CASE WHEN f.actual_departure <= DATE_ADD(f.scheduled_departure, INTERVAL 15 MINUTE)
-                           AND f.actual_departure IS NOT NULL THEN 1 ELSE 0 END)
-          / NULLIF(SUM(f.actual_departure IS NOT NULL), 0)
+          100.0 * SUM(CASE
+            WHEN f.flight_type = 'departure' AND f.actual_departure IS NOT NULL
+                 AND f.actual_departure <= DATE_ADD(f.scheduled_departure, INTERVAL 15 MINUTE) THEN 1
+            WHEN f.flight_type = 'arrival'   AND f.actual_arrival IS NOT NULL
+                 AND f.actual_arrival   <= DATE_ADD(f.scheduled_arrival,   INTERVAL 15 MINUTE) THEN 1
+            ELSE 0 END)
+          / NULLIF(SUM(
+            CASE WHEN f.flight_type = 'departure' AND f.actual_departure IS NOT NULL THEN 1
+                 WHEN f.flight_type = 'arrival'   AND f.actual_arrival   IS NOT NULL THEN 1
+                 ELSE 0 END
+          ), 0)
         , 1)                                                      AS otp_pct
       FROM airlines a
       JOIN flights f ON f.airline_id = a.id
@@ -366,30 +421,29 @@ async function getAirlinePerformance(req, res, next) {
 async function getDelayHeatmap(req, res, next) {
   try {
     const { airport_id, date = new Date().toISOString().slice(0, 10) } = req.query;
-
-    let where = 'WHERE DATE(scheduled_departure) = ?';
-    const params = [date];
-    if (airport_id) {
-      where += ' AND (origin_airport_id = ? OR destination_airport_id = ?)';
-      params.push(airport_id, airport_id);
-    }
+    const { clause: where, params } = flightWhere(airport_id, date);
 
     const [rows] = await db.query(`
       SELECT
-        HOUR(scheduled_departure)                           AS hour_of_day,
-        COUNT(*)                                            AS total_flights,
-        COALESCE(SUM(status = 'delayed'), 0)                AS delayed_count,
-        COALESCE(SUM(status = 'cancelled'), 0)              AS cancelled_count,
+        HOUR(CASE WHEN flight_type = 'arrival' THEN scheduled_arrival
+                  ELSE scheduled_departure END)     AS hour_of_day,
+        COUNT(*)                                    AS total_flights,
+        COALESCE(SUM(status = 'delayed'), 0)         AS delayed_count,
+        COALESCE(SUM(status = 'cancelled'), 0)       AS cancelled_count,
         ROUND(AVG(
-          CASE WHEN actual_departure IS NOT NULL
-               THEN TIMESTAMPDIFF(MINUTE, scheduled_departure, actual_departure) END
-        ), 1)                                               AS avg_delay_min,
+          CASE WHEN flight_type = 'departure' AND actual_departure IS NOT NULL
+               THEN TIMESTAMPDIFF(MINUTE, scheduled_departure, actual_departure)
+               WHEN flight_type = 'arrival' AND actual_arrival IS NOT NULL
+               THEN TIMESTAMPDIFF(MINUTE, scheduled_arrival, actual_arrival) END
+        ), 1)                                        AS avg_delay_min,
         ROUND(MAX(
-          CASE WHEN actual_departure IS NOT NULL
-               THEN TIMESTAMPDIFF(MINUTE, scheduled_departure, actual_departure) END
-        ), 1)                                               AS max_delay_min
+          CASE WHEN flight_type = 'departure' AND actual_departure IS NOT NULL
+               THEN TIMESTAMPDIFF(MINUTE, scheduled_departure, actual_departure)
+               WHEN flight_type = 'arrival' AND actual_arrival IS NOT NULL
+               THEN TIMESTAMPDIFF(MINUTE, scheduled_arrival, actual_arrival) END
+        ), 1)                                        AS max_delay_min
       FROM flights ${where}
-      GROUP BY HOUR(scheduled_departure)
+      GROUP BY hour_of_day
       ORDER BY hour_of_day ASC
     `, params);
 

@@ -5,8 +5,8 @@ import {
   DashboardOutlined, SwapOutlined, UserOutlined, LogoutOutlined,
   GatewayOutlined, AlertOutlined, ClockCircleOutlined,
   BulbOutlined, BulbFilled, BellOutlined,
-  BarChartOutlined, LineChartOutlined, RadarChartOutlined, FileSearchOutlined,
-  GlobalOutlined,
+  BarChartOutlined, LineChartOutlined, AimOutlined, FileSearchOutlined,
+  GlobalOutlined, ControlOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../../auth/AuthProvider';
 import useAppStore from '../../store/useAppStore';
@@ -23,7 +23,7 @@ const NAV_GROUPS = [
     children: [
       { key: '/',          icon: <DashboardOutlined />,  label: 'Dashboard',          to: '/'          },
       { key: '/flights',   icon: <SwapOutlined />,       label: 'Flight Board',       to: '/flights'   },
-      { key: '/gates',     icon: <GatewayOutlined />,    label: 'Gate Management',    to: '/gates'     },
+      { key: '/gates',     icon: <GatewayOutlined />,    label: 'Stand Management',   to: '/gates'     },
       { key: '/incidents', icon: <AlertOutlined />,      label: 'Incidents',          to: '/incidents' },
     ],
   },
@@ -33,14 +33,15 @@ const NAV_GROUPS = [
     children: [
       { key: '/airlines', icon: <BarChartOutlined />,   label: 'Airline Performance', to: '/airlines' },
       { key: '/trends',   icon: <LineChartOutlined />,  label: 'Historical Trends',   to: '/trends'   },
-      { key: '/map',      icon: <RadarChartOutlined />, label: 'Live Ops Map',        to: '/map'      },
+      { key: '/map',      icon: <AimOutlined />,        label: 'Tactical Map',        to: '/map'      },
     ],
   },
   {
     key: 'admin',
     label: 'ADMIN',
     children: [
-      { key: '/audit', icon: <FileSearchOutlined />, label: 'Audit Log', to: '/audit' },
+      { key: '/audit',      icon: <FileSearchOutlined />, label: 'Audit Log',  to: '/audit'      },
+      { key: '/simulator',  icon: <ControlOutlined />,    label: 'Simulator',  to: '/simulator'  },
     ],
   },
 ];
@@ -124,7 +125,7 @@ function ApocLogo({ collapsed }) {
         AIRPORT OPERATIONS CENTER
       </div>
       <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center', gap: 4, position: 'relative' }}>
-        {['MAA', 'BLR', 'DEL', 'BOM'].map(c => (
+        {['BOM', 'AMD'].map(c => (
           <span key={c} style={{
             fontSize: 8, fontWeight: 700, letterSpacing: 0.5,
             background: 'rgba(255,255,255,0.15)',
